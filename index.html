@@ -1421,7 +1421,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.1.4</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.2.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2993,7 +2993,7 @@ function msRenderTab(tab) {
 
 function msRenderHand(el) {
   // 常に人間プレイヤーの手札を表示
-  const human = gs.players ? gs.players.find(p => p.isHuman) : null;
+  const human = gs.players ? gs.players.find(p => p.isLocal) : null;
   if (!human || !human.hand || human.hand.length === 0) {
     el.innerHTML = '<div style="font-size:11px;color:#445;padding:8px;">手札がありません</div>';
     return;
@@ -3105,7 +3105,7 @@ function msRenderDiscard(el) {
 
 function msRenderMissions(el) {
   if (!gs.missions) return;
-  const human = gs.players ? gs.players.find(p => p.isHuman) : null;
+  const human = gs.players ? gs.players.find(p => p.isLocal) : null;
   const myTeam = human ? human.team : gameConfig.playerTeam;
   const myTeamMission = myTeam === 'a' ? gs.missions.teamA : gs.missions.teamB;
   const myTeamLabel = myTeam === 'a' ? 'A軍ミッション' : 'B軍ミッション';
@@ -3784,7 +3784,7 @@ function initPlayers() {
 
   // Build player team
   const humanPlayer = {
-    idx: 0, team: pTeam, name: gameConfig.playerName, isHuman: true,
+    idx: 0, team: pTeam, name: gameConfig.playerName, isLocal: true,
     stats: { ...gameConfig.playerStats }, unit: null, destroyed: false, hand: [], ai: null
   };
   gs.players.push(humanPlayer);
@@ -3792,7 +3792,7 @@ function initPlayers() {
   for (let i = 0; i < allyCPUs.length; i++) {
     const c = allyCPUs[i];
     gs.players.push({
-      idx: gs.players.length, team: pTeam, name: c.name, isHuman: false,
+      idx: gs.players.length, team: pTeam, name: c.name, isLocal: false,
       stats: { tech: c.tech, react: c.react, spirit: c.spirit },
       unit: null, destroyed: false, hand: [], ai: c.ai
     });
@@ -3802,7 +3802,7 @@ function initPlayers() {
   for (let i = 0; i < enemyCPUs.length; i++) {
     const c = enemyCPUs[i];
     gs.players.push({
-      idx: gs.players.length, team: eTeam, name: c.name, isHuman: false,
+      idx: gs.players.length, team: eTeam, name: c.name, isLocal: false,
       stats: { tech: c.tech, react: c.react, spirit: c.spirit },
       unit: null, destroyed: false, hand: [], ai: c.ai
     });
@@ -3819,7 +3819,7 @@ function initPlayers() {
   gs.turnOrder = idx;
 
   // Save selection for rematch
-  gs._lastCpuSelection = { allyCPUs: allyCPUs.length > 0 ? gs.players.filter(p => !p.isHuman && p.team === pTeam).map(p => ({ name:p.name, tech:p.stats.tech, react:p.stats.react, spirit:p.stats.spirit, ai:p.ai })) : [],
+  gs._lastCpuSelection = { allyCPUs: allyCPUs.length > 0 ? gs.players.filter(p => !p.isLocal && p.team === pTeam).map(p => ({ name:p.name, tech:p.stats.tech, react:p.stats.react, spirit:p.stats.spirit, ai:p.ai })) : [],
     enemyCPUs: gs.players.filter(p => p.team === eTeam).map(p => ({ name:p.name, tech:p.stats.tech, react:p.stats.react, spirit:p.stats.spirit, ai:p.ai })) };
 }
 
@@ -3831,21 +3831,21 @@ function initPlayersFromSelection(sel) {
   const eTeam = pTeam === 'a' ? 'b' : 'a';
 
   const humanPlayer = {
-    idx: 0, team: pTeam, name: gameConfig.playerName, isHuman: true,
+    idx: 0, team: pTeam, name: gameConfig.playerName, isLocal: true,
     stats: { ...gameConfig.playerStats }, unit: null, destroyed: false, hand: [], ai: null
   };
   gs.players.push(humanPlayer);
 
   for (const c of sel.allyCPUs) {
     gs.players.push({
-      idx: gs.players.length, team: pTeam, name: c.name, isHuman: false,
+      idx: gs.players.length, team: pTeam, name: c.name, isLocal: false,
       stats: { tech: c.tech, react: c.react, spirit: c.spirit },
       unit: null, destroyed: false, hand: [], ai: c.ai
     });
   }
   for (const c of sel.enemyCPUs) {
     gs.players.push({
-      idx: gs.players.length, team: eTeam, name: c.name, isHuman: false,
+      idx: gs.players.length, team: eTeam, name: c.name, isLocal: false,
       stats: { tech: c.tech, react: c.react, spirit: c.spirit },
       unit: null, destroyed: false, hand: [], ai: c.ai
     });
@@ -4128,7 +4128,7 @@ function handleTurnDraw(player) {
     const cardId = drawCard(player);
     if (cardId) {
       const card = CARD_DB[cardId];
-      if (player.isHuman) {
+      if (player.isLocal) {
         addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'system');
       } else {
         addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'system');
@@ -4486,7 +4486,7 @@ function updateTurnInfo() {
   // 現在プレイヤーが人間でないとき（CPUターン）
   if (gs.phase !== 'gameover' && gs.phase !== 'setup' && gs.phase !== 'title') {
     const _cp = getCurrentPlayer();
-    if (_cp && !_cp.isHuman) {
+    if (_cp && !_cp.isLocal) {
       _phaseLabel = '他のプレイヤーのターンです';
     }
   }
@@ -4924,7 +4924,7 @@ function updateHandBar() {
   container.innerHTML = '';
 
   // Show human player's hand
-  const human = gs.players.find(p => p.isHuman);
+  const human = gs.players.find(p => p.isLocal);
   if (!human) return;
 
   if (human.hand.length === 0) {
@@ -5522,7 +5522,7 @@ function checkAllHandLimits(callback) {
   function processNext(idx) {
     if (idx >= overLimit.length) { if (callback) callback(); return; }
     const p = overLimit[idx];
-    if (p.isHuman) {
+    if (p.isLocal) {
       showDiscardExcess(p, () => { updateAll(); processNext(idx + 1); });
     } else {
       cpuDiscardExcess(p);
@@ -5815,7 +5815,7 @@ function eventDrawThenDiscard(player, callback) {
   const drawn = forceDrawCard(player);
   if (!drawn) { addLog('山札からカードを引けなかった。', 'log-progress'); if (callback) callback(); return; }
   addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'log-event');
-  if (player.isHuman) {
+  if (player.isLocal) {
     const btns = player.hand.map(cid => {
       const card = CARD_DB[cid];
       return { text: `🗑 ${card.name}`, cls: 'btn-warning', action: () => {
@@ -5865,7 +5865,7 @@ function eventDirectAttack(player, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
   const dmg = getShootDmg(player.unit, gs.diceValue);
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
@@ -5916,7 +5916,7 @@ function eventScorePoint(player, callback) {
 function eventMoveself(player, callback) {
   const valid = getValidEventHexes();
   if (valid.length === 0) { addLog(`${player.name} は移動できるマスがなかった。（イベント終了）`, 'log-event'); if (callback) callback(); return; }
-  if (player.isHuman) {
+  if (player.isLocal) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
     updateAll();
@@ -5951,7 +5951,7 @@ function eventMoveself(player, callback) {
 function eventMoveOther(player, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
-  if (player.isHuman) {
+  if (player.isLocal) {
     showEventMoveOtherSelect(player, targets, callback);
   } else {
     const enemies = targets.filter(t => t.team !== player.team);
@@ -5988,7 +5988,7 @@ function showEventMoveOtherSelect(player, targets, callback) {
 function eventMoveselfInternal(target, controller, callback, backFn) {
   const valid = getValidEventHexes();
   if (valid.length === 0) { addLog(`${target.name} は移動できるマスがなかった。（イベント終了）`, 'log-event'); if (callback) callback(); return; }
-  if (controller.isHuman) {
+  if (controller.isLocal) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
     updateAll();
@@ -6048,7 +6048,7 @@ function eventLimit(player, callback) {
 function eventBigAttack(player, dmg, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
@@ -6076,7 +6076,7 @@ function eventReboot(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = unitCards.map(cid => {
       const card = CARD_DB[cid];
@@ -6135,7 +6135,7 @@ function eventDiscardDownTo(player, targetCount, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = player.hand.map(cid => {
       const card = CARD_DB[cid];
@@ -6185,7 +6185,7 @@ function eventReclaimFromDiscard(player, remaining, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = gs.discard.map(cid => {
       const card = CARD_DB[cid];
@@ -6234,7 +6234,7 @@ function eventPressure(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = targets.map(t => ({
       text: `💥 ${t.name}（手札${t.hand.length}枚）`,
@@ -6303,7 +6303,7 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
     eventRetreatNext(orderedPlayers, idx + 1, spawns, callback);
     return;
   }
-  if (p.isHuman) {
+  if (p.isLocal) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     updateAll();
@@ -6355,7 +6355,7 @@ function eventFalsifyReport(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isHuman) {
+  if (player.isLocal) {
     
     const btns = completed.map(cm => {
       const m = MISSION_DB[cm.id];
@@ -6411,7 +6411,7 @@ function eventSpawnThirdForce(eventId, player, callback) {
     idx: gs.players.length,
     team: preset.team,
     name: preset.name,
-    isHuman: false,
+    isLocal: false,
     stats: { tech: preset.tech, react: preset.react, spirit: preset.spirit },
     unit: createUnit(preset.unitId, spawnHex.col, spawnHex.row, null),
     destroyed: false,
@@ -6508,7 +6508,7 @@ function processSetupQueue() {
           const cardId = forceDrawCard(player);
           if (cardId) {
             const card = CARD_DB[cardId];
-            if (player.isHuman) {
+            if (player.isLocal) {
               
             } else {
               
@@ -6539,7 +6539,7 @@ function processSetupQueue() {
     return;
   }
 
-  if (player.isHuman) {
+  if (player.isLocal) {
     // Human picks spawn
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
@@ -6657,7 +6657,7 @@ function beginNormalTurn(cp) {
   resetTurnBuffs();
   gs.phase = 'pre_roll'; gs.diceValue = null;
   updateAll();
-  if (!cp.isHuman) setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
+  if (!cp.isLocal) setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
   else showPreRollChoice(cp);
 }
 
@@ -6865,7 +6865,7 @@ function getPreDamageTotalText() {
 function preDamageRotation_Attacker() {
   gs.phase = 'pre_damage';
   const attacker = attackCtx.attacker;
-  if (attacker.isHuman && !attacker.destroyed) {
+  if (attacker.isLocal && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     if (usable.length > 0) {
       const btns = [];
@@ -6884,7 +6884,7 @@ function preDamageRotation_Attacker() {
         action:() => preDamageRotation_Defender() });
       updateAll(); setButtons(btns); return;
     }
-  } else if (!attacker.isHuman && !attacker.destroyed) {
+  } else if (!attacker.isLocal && !attacker.destroyed) {
     // CPU: ダメージアップのみ使用（タイミングA）
     // 条件: 攻撃対象が存在し、かつ必要な場合のみ
     const dmgUpCard = attacker.hand.find(cid => CARD_DB[cid].name === 'ダメージアップ');
@@ -6920,7 +6920,7 @@ function preDamageRotation_Defender() {
   const defender = attackCtx.target;
   // 回避成功済みなら防御フェーズをスキップ
   if (attackCtx.evadeSuccess) { preDamageRotation_ComboAllies(0); return; }
-  if (defender.isHuman && !defender.destroyed) {
+  if (defender.isLocal && !defender.destroyed) {
     const usableB = getUsableSkills(defender, ['B']);
     const usableF = getUsableSkills(defender, ['F']);
     if (usableB.length + usableF.length > 0) {
@@ -6949,7 +6949,7 @@ function preDamageRotation_Defender() {
         action:() => preDamageRotation_ComboAllies(0) });
       updateAll(); setButtons(btns); return;
     }
-  } else if (!defender.isHuman && !defender.destroyed) {
+  } else if (!defender.isLocal && !defender.destroyed) {
     // CPU: Type1は防御・回避を使わない。Type2-5は回避→防御の順で使用
     const aiType = defender.ai || 'type1';
     if (['type2','type3','type4','type5'].includes(aiType)) {
@@ -7022,7 +7022,7 @@ function preDamageRotation_ComboAllies(startIdx) {
   const eligible = getComboEligibleAllies();
   for (let i = startIdx; i < eligible.length; i++) {
     const ally = eligible[i];
-    if (ally.isHuman) {
+    if (ally.isLocal) {
       const comboDmg = getShootDmg(ally.unit, gs.diceValue);
       const btns = [];
       btns.push({
@@ -7170,7 +7170,7 @@ function preDamageRotation_AllPassed() {
   const btns = [];
 
   // Attacker can still use A/D/E/F skills even at this point
-  if (attacker.isHuman && !attacker.destroyed) {
+  if (attacker.isLocal && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     for (const cardId of usable) {
       const card = CARD_DB[cardId];
@@ -7191,7 +7191,7 @@ function preDamageRotation_AllPassed() {
     cls:'btn-attack', action:() => resolveAttackDamage()
   });
 
-  if (attacker.isHuman) {
+  if (attacker.isLocal) {
     updateAll();
     setButtons(btns);
   } else {
@@ -7322,7 +7322,7 @@ function postDamageRotation_Attacker() {
   gs.phase = 'post_damage';
   const attacker = gs._postDmgAttacker;
 
-  if (attacker.isHuman && !attacker.destroyed) {
+  if (attacker.isLocal && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     if (usable.length > 0) {
       const btns = [];
@@ -7361,7 +7361,7 @@ function postDamageRotation_Defender() {
     return;
   }
 
-  if (defender.isHuman) {
+  if (defender.isLocal) {
     const btns = [];
     for (const cardId of usableC) {
       const card = CARD_DB[cardId];
@@ -7422,7 +7422,7 @@ function postDamageRotation_Others(startIdx) {
     const usable = getUsableSkills(p, ['F']);
     if (usable.length === 0) continue; // auto-pass
 
-    if (p.isHuman) {
+    if (p.isLocal) {
       const btns = [];
       for (const cardId of usable) {
         const card = CARD_DB[cardId];
@@ -7458,7 +7458,7 @@ function postDamageRotation_AllPassed() {
   gs.phase = 'post_damage';
   const attacker = gs._postDmgAttacker;
 
-  if (attacker.isHuman && !attacker.destroyed) {
+  if (attacker.isLocal && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     const btns = [];
     for (const cardId of usable) {
@@ -7884,7 +7884,7 @@ function applyDraw(player, cardId, rawDice, cappedDice, returnCallback) {
   showSkillOverlay(cardId, rawDice, effectText, 'skill-effect-success', () => {
     // Check hand limit — if over 4, must discard down
     if (player.hand.length > MAX_HAND_SIZE) {
-      if (player.isHuman) {
+      if (player.isLocal) {
         showDiscardExcess(player, returnCallback);
       } else {
         // CPU: discard lowest value cards (unit cards first, then skill)
@@ -8095,7 +8095,7 @@ function applyRecycle(player, cardId, rawDice, cappedDice, returnCallback) {
       return;
     }
     
-    if (player.isHuman) {
+    if (player.isLocal) {
       showRecycleSelect(player, actualCount, returnCallback);
     } else {
       cpuRecycleSelect(player, actualCount);
@@ -8256,7 +8256,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
       if (usedAtPreRoll) {
         gs.phase = 'pre_roll';
         updateAll();
-        if (player.isHuman) {
+        if (player.isLocal) {
           showPreRollChoice(player);
         } else {
           setTimeout(() => cpuPreRoll(player, () => cpuTurn(player)), 300);
@@ -8272,7 +8272,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
     const swappable = getSwappableCards(player);
     if (swappable.length === 0) { next(); return; }
 
-    if (!player.isHuman) { next(); return; }
+    if (!player.isLocal) { next(); return; }
 
     gs.phase = 'evac_swap';
     
@@ -8305,7 +8305,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
 
   showSkillOverlay(cardId, diceValue, effectText, 'skill-effect-success', () => {
     if (gs.phase === 'gameover') return;
-    if (player.isHuman) {
+    if (player.isLocal) {
       showEvacHexSelect(player, available, afterEvac);
     } else {
       const sp = available[Math.floor(seededRandom() * available.length)];
@@ -8416,7 +8416,7 @@ function postMoveRotation_TurnPlayer() {
   // Check base at current position (may change after evac)
   const onBase = cp.unit && gs.grid[cp.unit.col][cp.unit.row] === CELL_TYPES.BASE;
 
-  if (!cp.isHuman) {
+  if (!cp.isLocal) {
     // CPU handled in cpuTurn, shouldn't reach here normally
     endTurn();
     return;
@@ -8521,7 +8521,7 @@ function postMoveRotation_Others(startIdx) {
     const usable = getUsableSkills(p, ['F']);
     if (usable.length === 0) continue; // auto-pass
 
-    if (p.isHuman) {
+    if (p.isLocal) {
       const btns = [];
       for (const cardId of usable) {
         const card = CARD_DB[cardId];
@@ -8556,7 +8556,7 @@ function postMoveRotation_AllPassed() {
   gs.phase = 'post_move';
   const cp = getCurrentPlayer();
 
-  if (cp.isHuman && !cp.destroyed) {
+  if (cp.isLocal && !cp.destroyed) {
     const adj = getNeighbors(cp.unit.col, cp.unit.row)
       .map(n => getUnitAt(n.col, n.row))
       .filter(e => e && e.team !== cp.team);
@@ -8675,7 +8675,7 @@ function executeSupply(player) {
     if (gs.phase === 'gameover') return;
     // Check hand limit — if over, must discard down
     if (player.hand.length > MAX_HAND_SIZE) {
-      if (player.isHuman) {
+      if (player.isLocal) {
         showDiscardExcess(player, () => { updateAll(); endTurn(); });
       } else {
         cpuDiscardExcess(player);
@@ -8810,7 +8810,7 @@ function handleRespawn(player) {
   const avail = spawns.filter(([c,r]) => !getUnitAt(c,r));
   if (avail.length === 0) { addLog(`${player.name} は再出撃できるマスがない。（ターン終了）`, 'system'); endTurn(); return; }
 
-  if (player.isHuman) {
+  if (player.isLocal) {
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
     
@@ -8917,8 +8917,11 @@ function executeRespawnWithUnit(player, unitId, cardId) {
 }
 
 // Check if a player is the current CPU taking their turn
+// CPU判定: isLocal=false かつ ai が設定されている場合はCPU
+// 将来のオンライン対戦ではリモート人間（isLocal=false, ai=null）は
+// CPUではなく相手の操作を待つ処理に分岐する
 function isCpuActing(player) {
-  return !player.isHuman && getCurrentPlayer() === player;
+  return !player.isLocal && getCurrentPlayer() === player;
 }
 
 function endTurn() {
@@ -9774,9 +9777,9 @@ canvas.addEventListener('click', e => {
 
   const cp = getCurrentPlayer();
   if (gs.phase === 'move') {
-    if (cp && cp.isHuman && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) executeMove(hex.col, hex.row);
+    if (cp && cp.isLocal && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) executeMove(hex.col, hex.row);
   } else if (gs.phase === 'shoot') {
-    if (cp && cp.isHuman) {
+    if (cp && cp.isLocal) {
       const t = gs.shootTargets.find(t => t.col === hex.col && t.row === hex.row);
       if (t) {
         gs.shootRangeHexes = [];
@@ -9785,7 +9788,7 @@ canvas.addEventListener('click', e => {
       }
     }
   } else if (gs.phase === 'melee') {
-    if (cp && cp.isHuman && gs.meleeTargets) {
+    if (cp && cp.isLocal && gs.meleeTargets) {
       const t = gs.meleeTargets.find(e => e.unit.col === hex.col && e.unit.row === hex.row);
       if (t) executeMeleeFromMap(t);
     }
