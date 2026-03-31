@@ -1421,7 +1421,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.1.0</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.1.3</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -8045,13 +8045,13 @@ function execHpRecover(player, cardId, returnCallback) {
 
 function applyHpRecover(player, cardId, rawDice, cappedDice, returnCallback) {
   const heal = cappedDice * 3;
-  const oldHp = player.unit.hp;
-  player.unit.hp = Math.min(player.unit.hp + heal, player.unit.maxHp);
-  const actual = player.unit.hp - oldHp;
+  const actual = Math.min(heal, player.unit.maxHp - player.unit.hp);
   const effectText = `耐久値を ${actual} 回復する`;
-  addLog(`スキルサイコロの出目は ${rawDice} 、耐久値が ${actual} 回復した。（現在の耐久値 ${player.unit.hp}）`, 'log-skill');
+  addLog(`スキルサイコロの出目は ${rawDice} 、耐久値が ${actual} 回復した。（現在の耐久値 ${player.unit.hp + actual}）`, 'log-skill');
   
   showSkillOverlay(cardId, rawDice, effectText, 'skill-effect-success', () => {
+    player.unit.hp = Math.min(player.unit.hp + heal, player.unit.maxHp);
+    if (actual > 0) addDamagePopup(player.unit.col, player.unit.row, `${actual}回復`, '#33ff33');
     updateAll();
     if (returnCallback) returnCallback();
   }, player);
