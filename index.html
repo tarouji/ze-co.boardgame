@@ -959,7 +959,7 @@
   .ms-bar-fill.react  { background: linear-gradient(90deg, #aa1a1a, #ff4a4a); }
   .ms-bar-fill.spirit { background: linear-gradient(90deg, #6a1a9a, #bb66ff); }
   .ms-stat-note { font-size: 10px; color: #445; margin-top: 2px; }
-  /* 対戦人数 */
+  /* 対戦形式 */
   .ms-match-options { display: flex; gap: 6px; }
   .ms-match-btn {
     flex: 1; padding: 7px 4px; border: 1px solid #2a3a55;
@@ -1340,7 +1340,7 @@
           <div class="ms-stat-note">各ステータス 1～6 ／ 合計12</div>
         </div>
         <div class="ms-section">
-          <div class="ms-label">対戦人数</div>
+          <div class="ms-label">対戦形式</div>
           <div class="ms-match-options">
             <button class="ms-match-btn" onclick="msSelectMatch(this,1)">1 vs 1</button>
             <button class="ms-match-btn selected" onclick="msSelectMatch(this,2)">2 vs 2</button>
@@ -1491,7 +1491,7 @@
         </div>
       </div>
       <div class="ss-section">
-        <div class="ss-label">対戦人数</div>
+        <div class="ss-label">対戦形式</div>
         <div class="ss-match-options">
           <button class="ss-match-btn" onclick="ssSelectMatch(this,1)">1 vs 1</button>
           <button class="ss-match-btn selected" onclick="ssSelectMatch(this,2)">2 vs 2</button>
@@ -1526,13 +1526,52 @@
   <div class="lobby-panel">
     <div class="lobby-title">ONLINE BATTLE</div>
 
-    <!-- ステップ1: 作成 or 参加 -->
+    <!-- ステップ1: プレイヤー設定 + 作成/参加 -->
     <div id="lobby-step-choice" class="lobby-section">
-      <div class="lobby-btn-row">
-        <button class="lobby-btn" onclick="lobbyCreateRoom()">部屋をつくる</button>
-        <button class="lobby-btn" onclick="lobbyShowJoin()">部屋に入る</button>
+      <div class="ss-section">
+        <div class="ss-label">プレイヤー名</div>
+        <div class="ss-name-row">
+          <input type="text" class="ss-name-input" id="lobby-player-name" placeholder="名前を入力" maxlength="12" oninput="lobbyCheckReady()">
+        </div>
       </div>
-      <button class="lobby-back-btn" onclick="closeLobby()">タイトルに戻る</button>
+      <div class="ss-section">
+        <div class="ss-label">ステータス設定</div>
+        <div class="ss-stat-alloc">
+          <div class="ss-stat-remain-row">
+            <div class="ss-stat-remain-label">残り: <span id="lobby-stat-remain">9</span></div>
+            <button class="ss-stat-quick-btn" onclick="lobbyClearStats()">クリア</button>
+            <button class="ss-stat-quick-btn" onclick="lobbyRandomStats()">ランダム</button>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">技術</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('tech',-1)">−</button>
+            <div class="ss-stat-val" id="lobby-stat-tech">1</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('tech',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill tech" id="lobby-bar-tech" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">反応</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('react',-1)">−</button>
+            <div class="ss-stat-val" id="lobby-stat-react">1</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('react',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill react" id="lobby-bar-react" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">精神</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('spirit',-1)">−</button>
+            <div class="ss-stat-val" id="lobby-stat-spirit">1</div>
+            <button class="ss-stat-btn" onclick="lobbyChangeStat('spirit',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill spirit" id="lobby-bar-spirit" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-note">各ステータス 1～6 ／ 合計12</div>
+        </div>
+      </div>
+
+      <div class="lobby-btn-row">
+        <button class="lobby-btn" id="lobby-create-btn" onclick="lobbyCreateRoom()">部屋をつくる</button>
+        <button class="lobby-btn" id="lobby-join-btn" onclick="lobbyShowJoin()">部屋に入る</button>
+      </div>
+      <button class="lobby-back-btn" onclick="closeLobby()">ゲームモードの選択に戻る</button>
     </div>
 
     <!-- ステップ2a: 部屋コード入力（ゲスト用） -->
@@ -1548,32 +1587,44 @@
 
     <!-- ステップ2b: 待機画面（ホスト/ゲスト共通） -->
     <div id="lobby-step-room" class="lobby-section" style="display:none;">
-      <div class="lobby-label">部屋コード</div>
-      <div class="lobby-code-display" id="lobby-room-code">----</div>
+      <div class="ss-section">
+        <div class="ss-label">部屋コード</div>
+        <div class="ss-vp-row">
+          <div class="ss-vp-val" id="lobby-room-code" style="font-size:42px; letter-spacing:8px;">----</div>
+        </div>
+      </div>
       <div class="lobby-status" id="lobby-room-status">参加者を待っています...</div>
       <div class="lobby-players" id="lobby-players-list"></div>
 
       <!-- ホスト設定エリア -->
       <div id="lobby-host-settings" style="display:none;">
-        <div class="lobby-label">対戦人数</div>
-        <div class="lobby-btn-row" id="lobby-match-btns">
-          <button class="lobby-btn" onclick="lobbySetMatch(1)">1vs1</button>
-          <button class="lobby-btn selected" onclick="lobbySetMatch(2)">2vs2</button>
-          <button class="lobby-btn" onclick="lobbySetMatch(3)">3vs3</button>
+        <div class="ss-section">
+          <div class="ss-label">対戦形式</div>
+          <div class="ss-match-options" id="lobby-match-btns">
+            <button class="ss-match-btn" onclick="lobbySetMatch(1)">1 vs 1</button>
+            <button class="ss-match-btn selected" onclick="lobbySetMatch(2)">2 vs 2</button>
+            <button class="ss-match-btn" onclick="lobbySetMatch(3)">3 vs 3</button>
+          </div>
         </div>
-        <div class="lobby-label">勝利条件</div>
-        <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:12px;">
-          <button class="lobby-btn" style="padding:8px 16px;" onclick="lobbyChangeVP(-5)">−</button>
-          <span style="font-family:'Orbitron',sans-serif; font-size:28px; font-weight:900; color:#ffd700; min-width:50px; text-align:center;" id="lobby-vp-val">10</span>
-          <button class="lobby-btn" style="padding:8px 16px;" onclick="lobbyChangeVP(5)">＋</button>
-          <span style="font-size:13px; color:#8899bb;">ポイント先取</span>
+        <div class="ss-section">
+          <div class="ss-label">勝利条件</div>
+          <div class="ss-vp-row">
+            <button class="ss-vp-btn" onclick="lobbyChangeVP(-5)">−</button>
+            <div class="ss-vp-val" id="lobby-vp-val">10</div>
+            <button class="ss-vp-btn" onclick="lobbyChangeVP(5)">＋</button>
+            <div class="ss-vp-unit">ポイント先取</div>
+          </div>
         </div>
-        <div class="lobby-label">BGM設定</div>
-        <div class="lobby-btn-row">
-          <button class="lobby-btn selected" id="lobby-bgm-on" onclick="lobbySetBGM(true)">BGMあり</button>
-          <button class="lobby-btn" id="lobby-bgm-off" onclick="lobbySetBGM(false)">BGMなし</button>
+        <div class="ss-section">
+          <div class="ss-label">BGM設定</div>
+          <div class="ss-bgm-row">
+            <button class="ss-bgm-btn active" id="lobby-bgm-on" onclick="lobbySetBGM(true)">BGMあり</button>
+            <button class="ss-bgm-btn" id="lobby-bgm-off" onclick="lobbySetBGM(false)">BGMなし</button>
+          </div>
         </div>
-        <button class="lobby-start-btn" id="lobby-start-btn" onclick="lobbyStartGame()" disabled>ゲーム開始</button>
+        <div class="ss-start-area">
+          <button class="ss-start-btn" id="lobby-start-btn" onclick="lobbyStartGame()" disabled>ゲーム開始</button>
+        </div>
       </div>
 
       <!-- ゲスト待機メッセージ -->
@@ -1602,7 +1653,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.3.6</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.4.4</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1903,15 +1954,41 @@ const OnlineLobby = (() => {
     container.innerHTML = '';
     if (!players) return;
     const entries = Object.entries(players);
-    entries.forEach(([pid, p]) => {
-      const row = document.createElement('div');
-      row.className = 'lobby-player-row';
-      row.innerHTML = `
-        <span class="lobby-player-name">${_escHtml(p.name || '???')}</span>
-        ${p.isHost ? '<span class="lobby-player-host">HOST</span>' : ''}
-      `;
-      container.appendChild(row);
-    });
+
+    // A軍・B軍に分けて表示
+    const teamA = entries.filter(([,p]) => p.team === 'a');
+    const teamB = entries.filter(([,p]) => p.team === 'b');
+
+    function renderTeamSection(label, teamClass, members) {
+      const header = document.createElement('div');
+      header.style.cssText = 'font-size:12px; font-weight:900; letter-spacing:1px; padding:4px 0; margin-top:4px;';
+      header.style.color = teamClass === 'team-a' ? '#4a9eff' : '#ff4a4a';
+      header.textContent = label;
+      container.appendChild(header);
+
+      if (members.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'font-size:11px; color:#445; padding:2px 8px; font-style:italic;';
+        empty.textContent = '（なし）';
+        container.appendChild(empty);
+        return;
+      }
+
+      members.forEach(([pid, p]) => {
+        const row = document.createElement('div');
+        row.className = 'lobby-player-row';
+        row.innerHTML = `
+          <span class="lobby-player-team ${teamClass}">${teamClass === 'team-a' ? 'A' : 'B'}</span>
+          <span class="lobby-player-name">${_escHtml(p.name || '???')}</span>
+          ${p.isHost ? '<span class="lobby-player-host">HOST</span>' : ''}
+          ${_isHost ? `<button class="lobby-btn" style="padding:2px 8px; font-size:10px;" onclick="lobbyToggleTeam('${pid}')">${teamClass === 'team-a' ? 'B軍へ' : 'A軍へ'}</button>` : ''}
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    renderTeamSection('A軍', 'team-a', teamA);
+    renderTeamSection('B軍', 'team-b', teamB);
 
     // ゲーム開始ボタンの有効化（ホストで2人以上）
     if (_isHost) {
@@ -2037,8 +2114,10 @@ const OnlineLobby = (() => {
         created: firebase.database.ServerValue.TIMESTAMP,
         players: {
           [_playerId]: {
-            name: (document.getElementById('ss-player-name') || document.getElementById('ms-player-name') || {}).value || 'Host',
+            name: lobbyGetPlayerName(),
             isHost: true,
+            team: 'a',
+            stats: { ...lobbyStats },
             joinedAt: firebase.database.ServerValue.TIMESTAMP
           }
         },
@@ -2100,10 +2179,11 @@ const OnlineLobby = (() => {
       _roomRef = fbDb.ref('rooms/' + code);
 
       // プレイヤーとして参加
-      const playerName = (document.getElementById('ss-player-name') || document.getElementById('ms-player-name') || {}).value || 'Guest';
       await _roomRef.child('players/' + _playerId).set({
-        name: playerName,
+        name: lobbyGetPlayerName(),
         isHost: false,
+        team: 'b',
+        stats: { ...lobbyStats },
         joinedAt: firebase.database.ServerValue.TIMESTAMP
       });
 
@@ -2153,6 +2233,15 @@ const OnlineLobby = (() => {
     setBGM(b) { _lobbyBGM = b; },
     getVP() { return _lobbyVP; },
     getMatch() { return _lobbyMatch; },
+
+    /** ホストがプレイヤーのチームを切り替え */
+    async togglePlayerTeam(pid) {
+      if (!_isHost || !_roomRef) return;
+      const snap = await _roomRef.child('players/' + pid + '/team').once('value');
+      const current = snap.val();
+      const newTeam = current === 'a' ? 'b' : 'a';
+      await _roomRef.child('players/' + pid + '/team').set(newTeam);
+    },
   };
 })();
 
@@ -2179,11 +2268,71 @@ function msBackToModeSelect() {
 // ============================================================
 // LOBBY UI FUNCTIONS
 // ============================================================
+const lobbyStats = { tech: 1, react: 1, spirit: 1 };
+const LOBBY_STAT_TOTAL = 12;
+const LOBBY_STAT_MIN = 1;
+const LOBBY_STAT_MAX = 6;
+
+function lobbyUpdateStatUI() {
+  document.getElementById('lobby-stat-tech').textContent = lobbyStats.tech;
+  document.getElementById('lobby-stat-react').textContent = lobbyStats.react;
+  document.getElementById('lobby-stat-spirit').textContent = lobbyStats.spirit;
+  const remain = LOBBY_STAT_TOTAL - lobbyStats.tech - lobbyStats.react - lobbyStats.spirit;
+  document.getElementById('lobby-stat-remain').textContent = remain;
+  // ステータスバー更新
+  const pct = v => (v / LOBBY_STAT_MAX * 100).toFixed(1) + '%';
+  const techBar = document.getElementById('lobby-bar-tech');
+  const reactBar = document.getElementById('lobby-bar-react');
+  const spiritBar = document.getElementById('lobby-bar-spirit');
+  if (techBar) techBar.style.width = pct(lobbyStats.tech);
+  if (reactBar) reactBar.style.width = pct(lobbyStats.react);
+  if (spiritBar) spiritBar.style.width = pct(lobbyStats.spirit);
+  lobbyCheckReady();
+}
+function lobbyChangeStat(stat, delta) {
+  const v = lobbyStats[stat] + delta;
+  if (v < LOBBY_STAT_MIN || v > LOBBY_STAT_MAX) return;
+  const used = lobbyStats.tech + lobbyStats.react + lobbyStats.spirit + delta;
+  if (used > LOBBY_STAT_TOTAL) return;
+  lobbyStats[stat] = v;
+  lobbyUpdateStatUI();
+}
+function lobbyClearStats() {
+  lobbyStats.tech = 1; lobbyStats.react = 1; lobbyStats.spirit = 1;
+  lobbyUpdateStatUI();
+}
+function lobbyRandomStats() {
+  const min = LOBBY_STAT_MIN, max = LOBBY_STAT_MAX, total = LOBBY_STAT_TOTAL;
+  let t, r, s;
+  do {
+    t = min + Math.floor(Math.random() * (max - min + 1));
+    r = min + Math.floor(Math.random() * (max - min + 1));
+    s = total - t - r;
+  } while (s < min || s > max);
+  lobbyStats.tech = t; lobbyStats.react = r; lobbyStats.spirit = s;
+  lobbyUpdateStatUI();
+}
+function lobbyCheckReady() {
+  // バリデーションはlobbyValidate()で行う（ボタン押下時にアラート）
+}
+/** バリデーション（アラート付き）。OKならtrue */
+function lobbyValidate() {
+  const name = (document.getElementById('lobby-player-name').value || '').trim();
+  if (!name) { alert('プレイヤー名を入力してください'); return false; }
+  const used = lobbyStats.tech + lobbyStats.react + lobbyStats.spirit;
+  if (used !== LOBBY_STAT_TOTAL) { alert(`ステータスは合計12にしてください（残り${LOBBY_STAT_TOTAL - used}）`); return false; }
+  return true;
+}
+function lobbyGetPlayerName() {
+  return (document.getElementById('lobby-player-name').value || '').trim() || 'Player';
+}
+
 function openLobby() {
   document.getElementById('lobby-screen').classList.add('active');
   document.getElementById('lobby-step-choice').style.display = '';
   document.getElementById('lobby-step-join').style.display = 'none';
   document.getElementById('lobby-step-room').style.display = 'none';
+  lobbyUpdateStatUI();
 }
 function closeLobby() {
   document.getElementById('lobby-screen').classList.remove('active');
@@ -2194,8 +2343,9 @@ function lobbyBackToChoice() {
   document.getElementById('lobby-step-room').style.display = 'none';
   document.getElementById('lobby-join-status').textContent = '';
 }
-function lobbyCreateRoom() { OnlineLobby.createRoom(); }
+function lobbyCreateRoom() { if (!lobbyValidate()) return; OnlineLobby.createRoom(); }
 function lobbyShowJoin() {
+  if (!lobbyValidate()) return;
   document.getElementById('lobby-step-choice').style.display = 'none';
   document.getElementById('lobby-step-join').style.display = '';
   document.getElementById('lobby-join-code').value = '';
@@ -2222,8 +2372,13 @@ function lobbyChangeVP(delta) {
 }
 function lobbySetBGM(on) {
   OnlineLobby.setBGM(on);
-  document.getElementById('lobby-bgm-on').classList.toggle('selected', on);
-  document.getElementById('lobby-bgm-off').classList.toggle('selected', !on);
+  document.getElementById('lobby-bgm-on').classList.toggle('active', on);
+  document.getElementById('lobby-bgm-off').classList.toggle('active', !on);
+  document.getElementById('lobby-bgm-on').classList.remove('selected');
+  document.getElementById('lobby-bgm-off').classList.remove('selected');
+}
+function lobbyToggleTeam(pid) {
+  OnlineLobby.togglePlayerTeam(pid);
 }
 function lobbyStartGame() { OnlineLobby.startGame(); }
 
