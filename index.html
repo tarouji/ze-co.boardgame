@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>起動戦士ゼーコガンニョム ボードゲーム</title>
+<!-- Firebase SDK (CDN) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Orbitron:wght@700;900&display=swap');
 
@@ -1191,6 +1194,90 @@
   .ms-log-entry.log-event { color: #d0a030; }
   .ms-log-entry.destroy { color: #f05050; }
 
+  /* ===== LOBBY SCREEN ===== */
+  #lobby-screen {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #0a0e17; z-index: 490;
+    display: none; justify-content: center; align-items: flex-start;
+    overflow-y: auto; padding: 30px 10px;
+  }
+  #lobby-screen.active { display: flex; }
+  .lobby-panel {
+    width: 600px; max-width: 95vw; padding: 30px 40px;
+    background: rgba(15, 20, 35, 0.95);
+    border: 2px solid #1e2a42; border-radius: 16px;
+    box-shadow: 0 0 60px rgba(0,0,0,0.5);
+  }
+  .lobby-title {
+    font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 900;
+    color: #ffd700; text-align: center; margin-bottom: 24px; letter-spacing: 2px;
+  }
+  .lobby-section { margin-bottom: 20px; }
+  .lobby-label {
+    font-size: 12px; font-weight: 900; color: #8899bb;
+    letter-spacing: 2px; margin-bottom: 8px;
+    border-bottom: 1px solid #1e2a42; padding-bottom: 4px;
+  }
+  .lobby-btn-row { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
+  .lobby-btn {
+    padding: 12px 32px; border: 2px solid #2a3a52; border-radius: 8px;
+    background: rgba(20,28,45,0.8); color: #aab; font-size: 15px; font-weight: 900;
+    cursor: pointer; font-family: 'Noto Sans JP', sans-serif; transition: all 0.2s;
+  }
+  .lobby-btn:hover { border-color: #4a9eff; color: #4a9eff; }
+  .lobby-btn.selected { border-color: #ffd700; color: #ffd700; background: rgba(255,215,0,0.1); }
+  .lobby-code-display {
+    font-family: 'Orbitron', sans-serif; font-size: 48px; font-weight: 900;
+    color: #ffd700; text-align: center; letter-spacing: 8px; margin: 16px 0;
+    text-shadow: 0 0 20px rgba(255,215,0,0.4);
+  }
+  .lobby-code-input {
+    width: 100%; padding: 12px 16px; font-size: 24px; font-weight: 900;
+    font-family: 'Orbitron', sans-serif; letter-spacing: 6px; text-align: center;
+    background: #0d1220; border: 2px solid #2a3a52; border-radius: 8px;
+    color: #ffd700; outline: none; text-transform: uppercase;
+  }
+  .lobby-code-input:focus { border-color: #4a9eff; }
+  .lobby-code-input::placeholder { color: #334; letter-spacing: 2px; font-size: 14px; }
+  .lobby-status {
+    text-align: center; font-size: 13px; color: #8899bb; margin: 12px 0;
+    min-height: 20px;
+  }
+  .lobby-status.error { color: #ff5555; }
+  .lobby-status.success { color: #5af5a0; }
+  .lobby-players {
+    background: rgba(0,0,0,0.3); border-radius: 8px; padding: 12px;
+    margin: 12px 0;
+  }
+  .lobby-player-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .lobby-player-row:last-child { border-bottom: none; }
+  .lobby-player-team {
+    font-size: 11px; font-weight: 900; padding: 2px 8px; border-radius: 3px;
+  }
+  .lobby-player-team.team-a { background: #1a3a6a; color: #4a9eff; }
+  .lobby-player-team.team-b { background: #6a1a1a; color: #ff4a4a; }
+  .lobby-player-name { font-size: 13px; font-weight: 700; color: #c0d0e8; flex: 1; }
+  .lobby-player-host { font-size: 10px; color: #ffd700; }
+  .lobby-player-cpu { font-size: 11px; color: #556; font-style: italic; }
+  .lobby-start-btn {
+    display: block; width: 100%; padding: 14px; border: none; border-radius: 8px;
+    background: linear-gradient(135deg, #1a4a8a, #2a6acc); color: #fff;
+    font-size: 16px; font-weight: 900; font-family: 'Orbitron', 'Noto Sans JP', sans-serif;
+    letter-spacing: 2px; cursor: pointer; transition: all 0.2s; margin-top: 16px;
+  }
+  .lobby-start-btn:hover { background: linear-gradient(135deg, #2a6acc, #4a9eff); }
+  .lobby-start-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .lobby-back-btn {
+    display: block; width: 100%; padding: 10px; border: 1px solid #2a3a52;
+    border-radius: 6px; background: transparent; color: #667;
+    font-size: 12px; font-weight: 700; cursor: pointer; text-align: center;
+    font-family: 'Noto Sans JP', sans-serif; transition: all 0.15s; margin-top: 10px;
+  }
+  .lobby-back-btn:hover { border-color: #ff5555; color: #ff5555; }
+
 </style>
 </head>
 <body>
@@ -1200,78 +1287,90 @@
     <img src="images/title_logo.png" alt="起動戦士ゼーコガンニョム">
   </div>
   <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
-    <div id="ms-config-area">
-      <div class="ms-section">
-        <div class="ms-label">所属選択</div>
-        <div class="ms-team-select">
-          <div class="ms-team-btn sel-a" id="ms-team-a" onclick="msSelectTeam('a')">A 軍</div>
-          <div class="ms-team-btn" id="ms-team-b" onclick="msSelectTeam('b')">B 軍</div>
-        </div>
-      </div>
-      <div class="ms-section">
-        <div class="ms-label">プレイヤー名</div>
-        <input type="text" class="ms-name-input" id="ms-player-name" placeholder="名前を入力" maxlength="12">
-      </div>
-      <div class="ms-section">
-        <div class="ms-label">ステータス設定</div>
-        <div class="ms-stat-remain-row">
-          <div class="ms-stat-remain-label">残り: <span id="ms-stat-remain">9</span></div>
-          <button class="ms-stat-quick-btn" onclick="ssClearStats()">クリア</button>
-          <button class="ms-stat-quick-btn" onclick="ssRandomStats()">ランダム</button>
-        </div>
-        <div class="ms-stat-row">
-          <div class="ms-stat-name">技術</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('tech',-1)">−</button>
-          <div class="ms-stat-val" id="ms-stat-tech">1</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('tech',1)">＋</button>
-          <div class="ms-bar-bg"><div class="ms-bar-fill tech" id="ms-bar-tech" style="width:16.7%"></div></div>
-        </div>
-        <div class="ms-stat-row">
-          <div class="ms-stat-name">反応</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('react',-1)">−</button>
-          <div class="ms-stat-val" id="ms-stat-react">1</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('react',1)">＋</button>
-          <div class="ms-bar-bg"><div class="ms-bar-fill react" id="ms-bar-react" style="width:16.7%"></div></div>
-        </div>
-        <div class="ms-stat-row">
-          <div class="ms-stat-name">精神</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('spirit',-1)">−</button>
-          <div class="ms-stat-val" id="ms-stat-spirit">1</div>
-          <button class="ms-stat-btn" onclick="msChangeStat('spirit',1)">＋</button>
-          <div class="ms-bar-bg"><div class="ms-bar-fill spirit" id="ms-bar-spirit" style="width:16.7%"></div></div>
-        </div>
-        <div class="ms-stat-note">各ステータス 1～6 ／ 合計12</div>
-      </div>
-      <div class="ms-section">
-        <div class="ms-label">対戦人数</div>
-        <div class="ms-match-options">
-          <button class="ms-match-btn" onclick="msSelectMatch(this,1)">1 vs 1</button>
-          <button class="ms-match-btn selected" onclick="msSelectMatch(this,2)">2 vs 2</button>
-          <button class="ms-match-btn" onclick="msSelectMatch(this,3)">3 vs 3</button>
-        </div>
-      </div>
-      <div class="ms-section">
-        <div class="ms-label">勝利条件</div>
-        <div class="ms-vp-row">
-          <button class="ms-vp-btn" onclick="msChangeVP(-5)">−</button>
-          <div class="ms-vp-val" id="ms-vp-val">10</div>
-          <button class="ms-vp-btn" onclick="msChangeVP(5)">＋</button>
-          <div class="ms-vp-unit">ポイント先取</div>
-        </div>
-        <div class="ms-turn-note" id="ms-turn-note">ターン上限: 30ターン</div>
-      </div>
-      <div class="ms-section">
-        <div class="ms-label">BGM設定</div>
-        <div class="ms-bgm-row">
-          <button class="ms-bgm-btn active" id="ms-bgm-on"  onclick="ssBGMSelect(true)">BGMあり</button>
-          <button class="ms-bgm-btn"        id="ms-bgm-off" onclick="ssBGMSelect(false)">BGMなし</button>
-        </div>
-      </div>
+    <!-- ステップ1: モード選択 -->
+    <div id="ms-mode-select" style="display:flex; flex-direction:column; flex:1; justify-content:center; align-items:center; gap:12px; padding:16px;">
+      <button class="ms-footer-btn" onclick="openInfoModal('rule-modal')" style="width:80%; padding:10px;">ルール説明</button>
+      <button class="ms-footer-btn" onclick="openInfoModal('card-modal-info')" style="width:80%; padding:10px;">カード一覧</button>
+      <button class="ms-footer-btn ms-start-btn" onclick="msShowSoloSetup()" style="width:80%; padding:14px; font-size:14px;">1人用CPU戦</button>
+      <button class="ms-footer-btn" style="width:80%; padding:14px; font-size:14px; background:linear-gradient(135deg,#6a3a8a,#9a4acc);color:#fff;" onclick="openLobby()">オンライン対戦</button>
     </div>
-    <div id="ms-footer">
-      <button class="ms-footer-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
-      <button class="ms-footer-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
-      <button class="ms-footer-btn ms-start-btn" onclick="msStartGame()">ゲーム開始</button>
+
+    <!-- ステップ2: 1人用設定画面 -->
+    <div id="ms-solo-setup" style="display:none; flex-direction:column; flex:1;">
+      <div id="ms-config-area">
+        <div class="ms-section">
+          <div class="ms-label">所属選択</div>
+          <div class="ms-team-select">
+            <div class="ms-team-btn sel-a" id="ms-team-a" onclick="msSelectTeam('a')">A 軍</div>
+            <div class="ms-team-btn" id="ms-team-b" onclick="msSelectTeam('b')">B 軍</div>
+          </div>
+        </div>
+        <div class="ms-section">
+          <div class="ms-label">プレイヤー名</div>
+          <input type="text" class="ms-name-input" id="ms-player-name" placeholder="名前を入力" maxlength="12">
+        </div>
+        <div class="ms-section">
+          <div class="ms-label">ステータス設定</div>
+          <div class="ms-stat-remain-row">
+            <div class="ms-stat-remain-label">残り: <span id="ms-stat-remain">9</span></div>
+            <button class="ms-stat-quick-btn" onclick="ssClearStats()">クリア</button>
+            <button class="ms-stat-quick-btn" onclick="ssRandomStats()">ランダム</button>
+          </div>
+          <div class="ms-stat-row">
+            <div class="ms-stat-name">技術</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('tech',-1)">−</button>
+            <div class="ms-stat-val" id="ms-stat-tech">1</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('tech',1)">＋</button>
+            <div class="ms-bar-bg"><div class="ms-bar-fill tech" id="ms-bar-tech" style="width:16.7%"></div></div>
+          </div>
+          <div class="ms-stat-row">
+            <div class="ms-stat-name">反応</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('react',-1)">−</button>
+            <div class="ms-stat-val" id="ms-stat-react">1</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('react',1)">＋</button>
+            <div class="ms-bar-bg"><div class="ms-bar-fill react" id="ms-bar-react" style="width:16.7%"></div></div>
+          </div>
+          <div class="ms-stat-row">
+            <div class="ms-stat-name">精神</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('spirit',-1)">−</button>
+            <div class="ms-stat-val" id="ms-stat-spirit">1</div>
+            <button class="ms-stat-btn" onclick="msChangeStat('spirit',1)">＋</button>
+            <div class="ms-bar-bg"><div class="ms-bar-fill spirit" id="ms-bar-spirit" style="width:16.7%"></div></div>
+          </div>
+          <div class="ms-stat-note">各ステータス 1～6 ／ 合計12</div>
+        </div>
+        <div class="ms-section">
+          <div class="ms-label">対戦人数</div>
+          <div class="ms-match-options">
+            <button class="ms-match-btn" onclick="msSelectMatch(this,1)">1 vs 1</button>
+            <button class="ms-match-btn selected" onclick="msSelectMatch(this,2)">2 vs 2</button>
+            <button class="ms-match-btn" onclick="msSelectMatch(this,3)">3 vs 3</button>
+          </div>
+        </div>
+        <div class="ms-section">
+          <div class="ms-label">勝利条件</div>
+          <div class="ms-vp-row">
+            <button class="ms-vp-btn" onclick="msChangeVP(-5)">−</button>
+            <div class="ms-vp-val" id="ms-vp-val">10</div>
+            <button class="ms-vp-btn" onclick="msChangeVP(5)">＋</button>
+            <div class="ms-vp-unit">ポイント先取</div>
+          </div>
+          <div class="ms-turn-note" id="ms-turn-note">ターン上限: 30ターン</div>
+        </div>
+        <div class="ms-section">
+          <div class="ms-label">BGM設定</div>
+          <div class="ms-bgm-row">
+            <button class="ms-bgm-btn active" id="ms-bgm-on"  onclick="ssBGMSelect(true)">BGMあり</button>
+            <button class="ms-bgm-btn"        id="ms-bgm-off" onclick="ssBGMSelect(false)">BGMなし</button>
+          </div>
+        </div>
+      </div>
+      <div id="ms-footer">
+        <button class="ms-footer-btn" onclick="msBackToModeSelect()">モード選択に戻る</button>
+        <button class="ms-footer-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
+        <button class="ms-footer-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
+        <button class="ms-footer-btn ms-start-btn" onclick="msStartGame()">ゲーム開始</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1326,85 +1425,167 @@
 <div id="start-screen">
   <div class="start-panel">
     <div class="start-logo"><img src="images/title_logo.png" alt="起動戦士ゼーコガンニョム"></div>
-    <div class="ss-info-btns">
-      <button class="ss-info-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
-      <button class="ss-info-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
-    </div>
-    <div class="ss-section">
-      <div class="ss-label">所属選択</div>
-      <div class="ss-team-select">
-        <div class="ss-team-btn sel-a" id="ss-team-a" onclick="ssSelectTeam('a')">A 軍</div>
-        <div class="ss-team-btn" id="ss-team-b" onclick="ssSelectTeam('b')">B 軍</div>
+
+    <!-- ステップ1: モード選択 -->
+    <div id="ss-mode-select">
+      <div class="ss-info-btns">
+        <button class="ss-info-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
+        <button class="ss-info-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
+      </div>
+      <div class="ss-start-area" style="margin-top:20px;">
+        <button class="ss-start-btn" onclick="ssShowSoloSetup()">1人用CPU戦</button>
+        <button class="ss-start-btn" style="margin-top:12px; background:linear-gradient(135deg,#6a3a8a,#9a4acc);" onclick="openLobby()">オンライン対戦</button>
       </div>
     </div>
-    <div class="ss-section">
-      <div class="ss-label">プレイヤー名</div>
-      <div class="ss-name-row">
-        <input type="text" class="ss-name-input" id="ss-player-name" placeholder="名前を入力" maxlength="12">
+
+    <!-- ステップ2: 1人用設定画面 -->
+    <div id="ss-solo-setup" style="display:none;">
+      <div class="ss-info-btns">
+        <button class="ss-info-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
+        <button class="ss-info-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
       </div>
-    </div>
-    <div class="ss-section">
-      <div class="ss-label">ステータス設定</div>
-      <div class="ss-stat-alloc">
-        <div class="ss-stat-remain-row">
-          <div class="ss-stat-remain-label">残り: <span id="ss-stat-remain">9</span></div>
-          <button class="ss-stat-quick-btn" onclick="ssClearStats()">クリア</button>
-          <button class="ss-stat-quick-btn" onclick="ssRandomStats()">ランダム</button>
+      <button class="lobby-back-btn" style="margin-bottom:16px;" onclick="ssBackToModeSelect()">ゲームモードの選択に戻る</button>
+      <div class="ss-section">
+        <div class="ss-label">所属選択</div>
+        <div class="ss-team-select">
+          <div class="ss-team-btn sel-a" id="ss-team-a" onclick="ssSelectTeam('a')">A 軍</div>
+          <div class="ss-team-btn" id="ss-team-b" onclick="ssSelectTeam('b')">B 軍</div>
         </div>
-        <div class="ss-stat-row">
-          <div class="ss-stat-name">技術</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('tech',-1)">−</button>
-          <div class="ss-stat-val" id="ss-stat-tech">1</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('tech',1)">＋</button>
-          <div class="ss-bar-bg"><div class="ss-bar-fill tech" id="ss-bar-tech" style="width:16.7%"></div></div>
+      </div>
+      <div class="ss-section">
+        <div class="ss-label">プレイヤー名</div>
+        <div class="ss-name-row">
+          <input type="text" class="ss-name-input" id="ss-player-name" placeholder="名前を入力" maxlength="12">
         </div>
-        <div class="ss-stat-row">
-          <div class="ss-stat-name">反応</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('react',-1)">−</button>
-          <div class="ss-stat-val" id="ss-stat-react">1</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('react',1)">＋</button>
-          <div class="ss-bar-bg"><div class="ss-bar-fill react" id="ss-bar-react" style="width:16.7%"></div></div>
+      </div>
+      <div class="ss-section">
+        <div class="ss-label">ステータス設定</div>
+        <div class="ss-stat-alloc">
+          <div class="ss-stat-remain-row">
+            <div class="ss-stat-remain-label">残り: <span id="ss-stat-remain">9</span></div>
+            <button class="ss-stat-quick-btn" onclick="ssClearStats()">クリア</button>
+            <button class="ss-stat-quick-btn" onclick="ssRandomStats()">ランダム</button>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">技術</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('tech',-1)">−</button>
+            <div class="ss-stat-val" id="ss-stat-tech">1</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('tech',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill tech" id="ss-bar-tech" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">反応</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('react',-1)">−</button>
+            <div class="ss-stat-val" id="ss-stat-react">1</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('react',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill react" id="ss-bar-react" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-row">
+            <div class="ss-stat-name">精神</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('spirit',-1)">−</button>
+            <div class="ss-stat-val" id="ss-stat-spirit">1</div>
+            <button class="ss-stat-btn" onclick="ssChangeStat('spirit',1)">＋</button>
+            <div class="ss-bar-bg"><div class="ss-bar-fill spirit" id="ss-bar-spirit" style="width:16.7%"></div></div>
+          </div>
+          <div class="ss-stat-note">各ステータス 1～6 ／ 合計12</div>
         </div>
-        <div class="ss-stat-row">
-          <div class="ss-stat-name">精神</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('spirit',-1)">−</button>
-          <div class="ss-stat-val" id="ss-stat-spirit">1</div>
-          <button class="ss-stat-btn" onclick="ssChangeStat('spirit',1)">＋</button>
-          <div class="ss-bar-bg"><div class="ss-bar-fill spirit" id="ss-bar-spirit" style="width:16.7%"></div></div>
+      </div>
+      <div class="ss-section">
+        <div class="ss-label">対戦人数</div>
+        <div class="ss-match-options">
+          <button class="ss-match-btn" onclick="ssSelectMatch(this,1)">1 vs 1</button>
+          <button class="ss-match-btn selected" onclick="ssSelectMatch(this,2)">2 vs 2</button>
+          <button class="ss-match-btn" onclick="ssSelectMatch(this,3)">3 vs 3</button>
         </div>
-        <div class="ss-stat-note">各ステータス 1～6 ／ 合計12</div>
       </div>
-    </div>
-    <div class="ss-section">
-      <div class="ss-label">対戦人数</div>
-      <div class="ss-match-options">
-        <button class="ss-match-btn" onclick="ssSelectMatch(this,1)">1 vs 1</button>
-        <button class="ss-match-btn selected" onclick="ssSelectMatch(this,2)">2 vs 2</button>
-        <button class="ss-match-btn" onclick="ssSelectMatch(this,3)">3 vs 3</button>
+      <div class="ss-section">
+        <div class="ss-label">勝利条件</div>
+        <div class="ss-vp-row">
+          <button class="ss-vp-btn" onclick="ssChangeVP(-5)">−</button>
+          <div class="ss-vp-val" id="ss-vp-val">10</div>
+          <button class="ss-vp-btn" onclick="ssChangeVP(5)">＋</button>
+          <div class="ss-vp-unit">ポイント先取</div>
+        </div>
+        <div class="ss-turn-note" id="ss-turn-note">ターン上限: 30ターン（このときポイントの多い軍が勝利）</div>
       </div>
-    </div>
-    <div class="ss-section">
-      <div class="ss-label">勝利条件</div>
-      <div class="ss-vp-row">
-        <button class="ss-vp-btn" onclick="ssChangeVP(-5)">−</button>
-        <div class="ss-vp-val" id="ss-vp-val">10</div>
-        <button class="ss-vp-btn" onclick="ssChangeVP(5)">＋</button>
-        <div class="ss-vp-unit">ポイント先取</div>
+      <div class="ss-section">
+        <div class="ss-label">BGM設定</div>
+        <div class="ss-bgm-row">
+          <button class="ss-bgm-btn active" id="ss-bgm-on"  onclick="ssBGMSelect(true)">BGMあり</button>
+          <button class="ss-bgm-btn"        id="ss-bgm-off" onclick="ssBGMSelect(false)">BGMなし</button>
+        </div>
       </div>
-      <div class="ss-turn-note" id="ss-turn-note">ターン上限: 30ターン（このときポイントの多い軍が勝利）</div>
-    </div>
-    <div class="ss-section">
-      <div class="ss-label">BGM設定</div>
-      <div class="ss-bgm-row">
-        <button class="ss-bgm-btn active" id="ss-bgm-on"  onclick="ssBGMSelect(true)">BGMあり</button>
-        <button class="ss-bgm-btn"        id="ss-bgm-off" onclick="ssBGMSelect(false)">BGMなし</button>
+      <div class="ss-start-area">
+        <button class="ss-start-btn" onclick="ssStartGame()">ゲーム開始</button>
       </div>
-    </div>
-    <div class="ss-start-area">
-      <button class="ss-start-btn" onclick="ssStartGame()">ゲーム開始</button>
     </div>
   </div>
 </div>
+<!-- ===== LOBBY SCREEN ===== -->
+<div id="lobby-screen">
+  <div class="lobby-panel">
+    <div class="lobby-title">ONLINE BATTLE</div>
+
+    <!-- ステップ1: 作成 or 参加 -->
+    <div id="lobby-step-choice" class="lobby-section">
+      <div class="lobby-btn-row">
+        <button class="lobby-btn" onclick="lobbyCreateRoom()">部屋をつくる</button>
+        <button class="lobby-btn" onclick="lobbyShowJoin()">部屋に入る</button>
+      </div>
+      <button class="lobby-back-btn" onclick="closeLobby()">タイトルに戻る</button>
+    </div>
+
+    <!-- ステップ2a: 部屋コード入力（ゲスト用） -->
+    <div id="lobby-step-join" class="lobby-section" style="display:none;">
+      <div class="lobby-label">部屋コードを入力</div>
+      <input type="text" class="lobby-code-input" id="lobby-join-code" placeholder="コードを入力" maxlength="6">
+      <div class="lobby-status" id="lobby-join-status"></div>
+      <div class="lobby-btn-row">
+        <button class="lobby-btn" onclick="lobbyJoinRoom()">参加する</button>
+      </div>
+      <button class="lobby-back-btn" onclick="lobbyBackToChoice()">戻る</button>
+    </div>
+
+    <!-- ステップ2b: 待機画面（ホスト/ゲスト共通） -->
+    <div id="lobby-step-room" class="lobby-section" style="display:none;">
+      <div class="lobby-label">部屋コード</div>
+      <div class="lobby-code-display" id="lobby-room-code">----</div>
+      <div class="lobby-status" id="lobby-room-status">参加者を待っています...</div>
+      <div class="lobby-players" id="lobby-players-list"></div>
+
+      <!-- ホスト設定エリア -->
+      <div id="lobby-host-settings" style="display:none;">
+        <div class="lobby-label">対戦人数</div>
+        <div class="lobby-btn-row" id="lobby-match-btns">
+          <button class="lobby-btn" onclick="lobbySetMatch(1)">1vs1</button>
+          <button class="lobby-btn selected" onclick="lobbySetMatch(2)">2vs2</button>
+          <button class="lobby-btn" onclick="lobbySetMatch(3)">3vs3</button>
+        </div>
+        <div class="lobby-label">勝利条件</div>
+        <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:12px;">
+          <button class="lobby-btn" style="padding:8px 16px;" onclick="lobbyChangeVP(-5)">−</button>
+          <span style="font-family:'Orbitron',sans-serif; font-size:28px; font-weight:900; color:#ffd700; min-width:50px; text-align:center;" id="lobby-vp-val">10</span>
+          <button class="lobby-btn" style="padding:8px 16px;" onclick="lobbyChangeVP(5)">＋</button>
+          <span style="font-size:13px; color:#8899bb;">ポイント先取</span>
+        </div>
+        <div class="lobby-label">BGM設定</div>
+        <div class="lobby-btn-row">
+          <button class="lobby-btn selected" id="lobby-bgm-on" onclick="lobbySetBGM(true)">BGMあり</button>
+          <button class="lobby-btn" id="lobby-bgm-off" onclick="lobbySetBGM(false)">BGMなし</button>
+        </div>
+        <button class="lobby-start-btn" id="lobby-start-btn" onclick="lobbyStartGame()" disabled>ゲーム開始</button>
+      </div>
+
+      <!-- ゲスト待機メッセージ -->
+      <div id="lobby-guest-wait" style="display:none;">
+        <div class="lobby-status">ホストがゲームを開始するのを待っています...</div>
+      </div>
+
+      <button class="lobby-back-btn" onclick="lobbyLeaveRoom()">退出する</button>
+    </div>
+  </div>
+</div>
+
 <div id="skill-overlay">
   <div class="skill-overlay-content">
     <div class="skill-card-display"><img id="skill-overlay-img" src=""></div>
@@ -1421,7 +1602,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.2.0</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.3.5</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1668,6 +1849,384 @@
 </div>
 
 <script>
+// ============================================================
+// FIREBASE INITIALIZATION
+// ============================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyAoXehDAc6l2_OMgcbCrY0vghCIXq5OGcE",
+  authDomain: "ze-co-boardgame.firebaseapp.com",
+  databaseURL: "https://ze-co-boardgame-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "ze-co-boardgame",
+  storageBucket: "ze-co-boardgame.firebasestorage.app",
+  messagingSenderId: "456279374862",
+  appId: "1:456279374862:web:1cffdbc193e0024356505f"
+};
+firebase.initializeApp(firebaseConfig);
+const fbDb = firebase.database();
+
+// ============================================================
+// ONLINE LOBBY SYSTEM
+// ============================================================
+const OnlineLobby = (() => {
+  let _roomCode = null;
+  let _roomRef = null;
+  let _isHost = false;
+  let _playerId = null;  // ランダムID（各クライアント固有）
+  let _listeners = [];   // Firebase listeners to clean up
+  let _lobbyVP = 10;
+  let _lobbyMatch = 2;
+  let _lobbyBGM = true;
+
+  /** 4文字の部屋コードを生成 */
+  function _generateCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 紛らわしい文字を除外
+    let code = '';
+    for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return code;
+  }
+
+  /** プレイヤーIDを生成 */
+  function _generatePlayerId() {
+    return 'p_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  }
+
+  /** ロビーUIの表示切り替え */
+  function _showStep(step) {
+    document.getElementById('lobby-step-choice').style.display = step === 'choice' ? '' : 'none';
+    document.getElementById('lobby-step-join').style.display = step === 'join' ? '' : 'none';
+    document.getElementById('lobby-step-room').style.display = step === 'room' ? '' : 'none';
+  }
+
+  /** プレイヤーリストの描画 */
+  function _renderPlayers(players) {
+    const container = document.getElementById('lobby-players-list');
+    container.innerHTML = '';
+    if (!players) return;
+    const entries = Object.entries(players);
+    entries.forEach(([pid, p]) => {
+      const row = document.createElement('div');
+      row.className = 'lobby-player-row';
+      row.innerHTML = `
+        <span class="lobby-player-name">${_escHtml(p.name || '???')}</span>
+        ${p.isHost ? '<span class="lobby-player-host">HOST</span>' : ''}
+      `;
+      container.appendChild(row);
+    });
+
+    // ゲーム開始ボタンの有効化（ホストで2人以上）
+    if (_isHost) {
+      const startBtn = document.getElementById('lobby-start-btn');
+      startBtn.disabled = entries.length < 2;
+    }
+
+    // 人数に応じて対戦形式の選択肢を制限
+    if (_isHost) {
+      const count = entries.length;
+      const btns = document.getElementById('lobby-match-btns').children;
+      btns[0].disabled = count >= 3;  // 1vs1: 3人以上で不可
+      btns[0].style.opacity = count >= 3 ? '0.3' : '1';
+      btns[1].disabled = count >= 5;  // 2vs2: 5人以上で不可
+      btns[1].style.opacity = count >= 5 ? '0.3' : '1';
+      // 人数制限で現在の選択が無効になった場合、自動で変更
+      if (count >= 3 && _lobbyMatch === 1) { lobbySetMatch(2); }
+      if (count >= 5 && _lobbyMatch <= 2) { lobbySetMatch(3); }
+    }
+  }
+
+  function _escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /** Firebaseリスナーを全解除 */
+  function _cleanup() {
+    _listeners.forEach(fn => fn());
+    _listeners = [];
+    _roomRef = null;
+    _roomCode = null;
+    _isHost = false;
+  }
+
+  /** 部屋のデータ監視を開始 */
+  function _watchRoom() {
+    const playersRef = _roomRef.child('players');
+    const onPlayers = playersRef.on('value', snap => {
+      _renderPlayers(snap.val());
+    });
+    _listeners.push(() => playersRef.off('value', onPlayers));
+
+    // ゲーム開始シグナルを監視（ゲスト用）
+    const startRef = _roomRef.child('gameStart');
+    const onStart = startRef.on('value', snap => {
+      const data = snap.val();
+      if (data && data.started) {
+        _onGameStart(data);
+      }
+    });
+    _listeners.push(() => startRef.off('value', onStart));
+  }
+
+  /** ゲーム開始処理 */
+  function _onGameStart(data) {
+    console.log('[Lobby] Game starting with seed:', data.seed);
+
+    // ロビーを閉じる
+    document.getElementById('lobby-screen').classList.remove('active');
+
+    // スタート画面も閉じる
+    if (isMobile()) {
+      document.getElementById('ms-start-screen').classList.remove('active');
+    } else {
+      document.getElementById('start-screen').classList.add('hidden');
+    }
+
+    // ゲーム設定を反映
+    gameConfig.matchSize = data.matchSize || 2;
+    gameConfig.victoryPoints = data.vp || 10;
+    gameConfig.turnLimit = (data.vp || 10) * 3;
+
+    // プレイヤー名・ステータスの設定
+    // （現時点ではタイトル画面の設定をそのまま使う）
+    const nameEl = isMobile()
+      ? document.getElementById('ms-player-name')
+      : document.getElementById('ss-player-name');
+    gameConfig.playerName = (nameEl && nameEl.value.trim()) || 'Player';
+    gameConfig.playerTeam = ssTeam;
+    gameConfig.playerStats = { ...ssStats };
+
+    // BGM
+    if (data.bgm) _bgm.play(2); else _bgm.stop();
+
+    // シードを設定してゲーム開始
+    gs._onlineSeed = data.seed;
+    startGame();
+    if (isMobile()) msShowGame();
+  }
+
+  // === Public API ===
+  return {
+    get isHost() { return _isHost; },
+    get roomCode() { return _roomCode; },
+    get playerId() { return _playerId; },
+
+    /** 部屋を作成（ホスト） */
+    async createRoom() {
+      _playerId = _generatePlayerId();
+      _isHost = true;
+
+      // ユニークなコードを生成（衝突チェック）
+      let code, exists = true;
+      for (let attempt = 0; attempt < 10 && exists; attempt++) {
+        code = _generateCode();
+        const snap = await fbDb.ref('rooms/' + code).once('value');
+        exists = snap.exists();
+      }
+      if (exists) {
+        document.getElementById('lobby-room-status').textContent = 'エラー: コード生成に失敗しました';
+        document.getElementById('lobby-room-status').className = 'lobby-status error';
+        return;
+      }
+
+      _roomCode = code;
+      _roomRef = fbDb.ref('rooms/' + code);
+
+      // 部屋データを作成
+      await _roomRef.set({
+        host: _playerId,
+        created: firebase.database.ServerValue.TIMESTAMP,
+        players: {
+          [_playerId]: {
+            name: (document.getElementById('ss-player-name') || document.getElementById('ms-player-name') || {}).value || 'Host',
+            isHost: true,
+            joinedAt: firebase.database.ServerValue.TIMESTAMP
+          }
+        },
+        settings: { matchSize: _lobbyMatch, vp: _lobbyVP, bgm: _lobbyBGM },
+        gameStart: null
+      });
+
+      // 切断時に自動削除
+      _roomRef.onDisconnect().remove();
+
+      // UI更新
+      document.getElementById('lobby-room-code').textContent = code;
+      document.getElementById('lobby-room-status').textContent = '参加者を待っています...';
+      document.getElementById('lobby-room-status').className = 'lobby-status';
+      document.getElementById('lobby-host-settings').style.display = '';
+      document.getElementById('lobby-guest-wait').style.display = 'none';
+      _showStep('room');
+
+      _watchRoom();
+    },
+
+    /** 部屋に参加（ゲスト） */
+    async joinRoom(code) {
+      code = code.toUpperCase().trim();
+      if (code.length < 4) {
+        document.getElementById('lobby-join-status').textContent = 'コードを入力してください';
+        document.getElementById('lobby-join-status').className = 'lobby-status error';
+        return;
+      }
+
+      const statusEl = document.getElementById('lobby-join-status');
+      statusEl.textContent = '接続中...';
+      statusEl.className = 'lobby-status';
+
+      const snap = await fbDb.ref('rooms/' + code).once('value');
+      if (!snap.exists()) {
+        statusEl.textContent = '部屋が見つかりません';
+        statusEl.className = 'lobby-status error';
+        return;
+      }
+
+      const room = snap.val();
+      const playerCount = room.players ? Object.keys(room.players).length : 0;
+      if (playerCount >= 6) {
+        statusEl.textContent = '部屋が満員です（最大6人）';
+        statusEl.className = 'lobby-status error';
+        return;
+      }
+
+      if (room.gameStart && room.gameStart.started) {
+        statusEl.textContent = 'この部屋はすでにゲーム中です';
+        statusEl.className = 'lobby-status error';
+        return;
+      }
+
+      _playerId = _generatePlayerId();
+      _isHost = false;
+      _roomCode = code;
+      _roomRef = fbDb.ref('rooms/' + code);
+
+      // プレイヤーとして参加
+      const playerName = (document.getElementById('ss-player-name') || document.getElementById('ms-player-name') || {}).value || 'Guest';
+      await _roomRef.child('players/' + _playerId).set({
+        name: playerName,
+        isHost: false,
+        joinedAt: firebase.database.ServerValue.TIMESTAMP
+      });
+
+      // 切断時に自分を削除
+      _roomRef.child('players/' + _playerId).onDisconnect().remove();
+
+      // UI更新
+      document.getElementById('lobby-room-code').textContent = code;
+      document.getElementById('lobby-room-status').textContent = '部屋に参加しました';
+      document.getElementById('lobby-room-status').className = 'lobby-status success';
+      document.getElementById('lobby-host-settings').style.display = 'none';
+      document.getElementById('lobby-guest-wait').style.display = '';
+      _showStep('room');
+
+      _watchRoom();
+    },
+
+    /** ホストがゲーム開始 */
+    async startGame() {
+      if (!_isHost || !_roomRef) return;
+      const seed = Date.now() ^ 0xDEADBEEF ^ Math.floor(Math.random() * 0xFFFFFF);
+      await _roomRef.child('gameStart').set({
+        started: true,
+        seed: seed,
+        matchSize: _lobbyMatch,
+        vp: _lobbyVP,
+        bgm: _lobbyBGM,
+        timestamp: firebase.database.ServerValue.TIMESTAMP
+      });
+    },
+
+    /** 部屋を退出 */
+    async leaveRoom() {
+      if (_roomRef && _playerId) {
+        if (_isHost) {
+          await _roomRef.remove(); // ホストが抜けたら部屋ごと削除
+        } else {
+          await _roomRef.child('players/' + _playerId).remove();
+        }
+      }
+      _cleanup();
+    },
+
+    /** ロビー設定の更新 */
+    setMatch(n) { _lobbyMatch = n; },
+    setVP(v) { _lobbyVP = Math.max(5, Math.min(30, v)); },
+    setBGM(b) { _lobbyBGM = b; },
+    getVP() { return _lobbyVP; },
+    getMatch() { return _lobbyMatch; },
+  };
+})();
+
+// ============================================================
+// MODE SELECT UI FUNCTIONS (PC / Mobile)
+// ============================================================
+function ssShowSoloSetup() {
+  document.getElementById('ss-mode-select').style.display = 'none';
+  document.getElementById('ss-solo-setup').style.display = '';
+}
+function ssBackToModeSelect() {
+  document.getElementById('ss-mode-select').style.display = '';
+  document.getElementById('ss-solo-setup').style.display = 'none';
+}
+function msShowSoloSetup() {
+  document.getElementById('ms-mode-select').style.display = 'none';
+  document.getElementById('ms-solo-setup').style.display = 'flex';
+}
+function msBackToModeSelect() {
+  document.getElementById('ms-mode-select').style.display = 'flex';
+  document.getElementById('ms-solo-setup').style.display = 'none';
+}
+
+// ============================================================
+// LOBBY UI FUNCTIONS
+// ============================================================
+function openLobby() {
+  document.getElementById('lobby-screen').classList.add('active');
+  document.getElementById('lobby-step-choice').style.display = '';
+  document.getElementById('lobby-step-join').style.display = 'none';
+  document.getElementById('lobby-step-room').style.display = 'none';
+}
+function closeLobby() {
+  document.getElementById('lobby-screen').classList.remove('active');
+}
+function lobbyBackToChoice() {
+  document.getElementById('lobby-step-choice').style.display = '';
+  document.getElementById('lobby-step-join').style.display = 'none';
+  document.getElementById('lobby-step-room').style.display = 'none';
+  document.getElementById('lobby-join-status').textContent = '';
+}
+function lobbyCreateRoom() { OnlineLobby.createRoom(); }
+function lobbyShowJoin() {
+  document.getElementById('lobby-step-choice').style.display = 'none';
+  document.getElementById('lobby-step-join').style.display = '';
+  document.getElementById('lobby-join-code').value = '';
+  document.getElementById('lobby-join-status').textContent = '';
+}
+function lobbyJoinRoom() {
+  const code = document.getElementById('lobby-join-code').value;
+  OnlineLobby.joinRoom(code);
+}
+function lobbyLeaveRoom() {
+  OnlineLobby.leaveRoom();
+  lobbyBackToChoice();
+}
+function lobbySetMatch(n) {
+  OnlineLobby.setMatch(n);
+  const btns = document.getElementById('lobby-match-btns').children;
+  for (let i = 0; i < btns.length; i++) {
+    btns[i].classList.toggle('selected', i === n - 1);
+  }
+}
+function lobbyChangeVP(delta) {
+  OnlineLobby.setVP(OnlineLobby.getVP() + delta);
+  document.getElementById('lobby-vp-val').textContent = OnlineLobby.getVP();
+}
+function lobbySetBGM(on) {
+  OnlineLobby.setBGM(on);
+  document.getElementById('lobby-bgm-on').classList.toggle('selected', on);
+  document.getElementById('lobby-bgm-off').classList.toggle('selected', !on);
+}
+function lobbyStartGame() { OnlineLobby.startGame(); }
+
 // ============================================================
 // SEEDED RANDOM (Mulberry32) — オンライン同期用
 // ゲームロジック内ではMath.random()の代わりにseededRandom()を使う。
@@ -5776,13 +6335,13 @@ function applyEventDamage(target, dmg) {
   const actual = Math.min(dmg, target.unit.hp - 1);
   if (actual > 0) {
     target.unit.hp -= actual;
-    if (target.unit) {
-      addDamagePopup(target.unit.col, target.unit.row, `${actual}ダメージ`, '#ff9933');
-      _audio.init();
-      _audio.boom();
-    }
-    addLog(`${target.unit.name} は ${actual}ダメージ を受けた。`, 'log-event');
   }
+  if (target.unit) {
+    addDamagePopup(target.unit.col, target.unit.row, `${actual}ダメージ`, '#ff9933');
+    _audio.init();
+    _audio.boom();
+  }
+  addLog(`${target.unit.name} は ${actual}ダメージ を受けた。`, 'log-event');
   updateAll();
 }
 
@@ -5863,10 +6422,9 @@ function eventHeal(player, amount, fullHeal, callback) {
 // event05-06: Direct attack — choose any other unit, deal shoot damage based on dice
 function eventDirectAttack(player, callback) {
   const targets = getAliveOtherUnits(player);
-  if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
+  if (targets.length === 0) { addLog('何も起こらなかった', 'log-event'); if (callback) callback(); return; }
   const dmg = getShootDmg(player.unit, gs.diceValue);
   if (player.isLocal) {
-    
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
       cls: 'btn-warning', action: () => {
@@ -5875,10 +6433,14 @@ function eventDirectAttack(player, callback) {
         if (callback) callback();
       }
     }));
-    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns); } else {
-    // CPU: attack lowest HP enemy
+    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns);
+  } else {
+    // CPU: 敵軍の耐久値が一番高いユニットを選択（同値ならランダム）
     const enemies = targets.filter(t => t.team !== player.team);
-    const target = (enemies.length > 0 ? enemies : targets).sort((a,b) => a.unit.hp - b.unit.hp)[0];
+    const pool = enemies.length > 0 ? enemies : targets;
+    const maxHp = Math.max(...pool.map(t => t.unit.hp));
+    const top = pool.filter(t => t.unit.hp === maxHp);
+    const target = top[Math.floor(seededRandom() * top.length)];
     applyEventDamage(target, dmg);
     setTimeout(() => { if (callback) callback(); }, 300);
   }
@@ -6047,9 +6609,8 @@ function eventLimit(player, callback) {
 // event15: Choose other unit, deal 20 dmg (no kill)
 function eventBigAttack(player, dmg, callback) {
   const targets = getAliveOtherUnits(player);
-  if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
+  if (targets.length === 0) { addLog('何も起こらなかった', 'log-event'); if (callback) callback(); return; }
   if (player.isLocal) {
-    
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
       cls: 'btn-warning', action: () => {
@@ -6058,9 +6619,14 @@ function eventBigAttack(player, dmg, callback) {
         if (callback) callback();
       }
     }));
-    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns); } else {
+    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns);
+  } else {
+    // CPU: 敵軍の耐久値が一番高いユニットを選択（同値ならランダム）
     const enemies = targets.filter(t => t.team !== player.team);
-    const target = (enemies.length > 0 ? enemies : targets).sort((a,b) => a.unit.hp - b.unit.hp)[0];
+    const pool = enemies.length > 0 ? enemies : targets;
+    const maxHp = Math.max(...pool.map(t => t.unit.hp));
+    const top = pool.filter(t => t.unit.hp === maxHp);
+    const target = top[Math.floor(seededRandom() * top.length)];
     applyEventDamage(target, dmg);
     setTimeout(() => { if (callback) callback(); }, 300);
   }
