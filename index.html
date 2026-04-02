@@ -1197,7 +1197,7 @@
   /* ===== LOBBY SCREEN ===== */
   #lobby-screen {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: #0a0e17; z-index: 490;
+    background: #0a0e17; z-index: 510;
     display: none; justify-content: center; align-items: flex-start;
     overflow-y: auto; padding: 30px 10px;
   }
@@ -1602,7 +1602,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.3.5</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.3.6</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -5516,6 +5516,7 @@ function startGame(rematch) {
   const seed = gs._onlineSeed || (Date.now() ^ 0xDEADBEEF);
   SeededRNG.setSeed(seed);
   gs._currentSeed = seed;  // デバッグ・同期確認用に保存
+  gs._onlineSeed = null;   // 使用済みシードをクリア（リマッチ時に新シードを生成するため）
   console.log('[SeededRNG] Game seed:', seed);
 
   // Full state reset
