@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.2</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.3</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1975,27 +1975,27 @@ const OnlineLobby = (() => {
       const teamColor = team === 'a' ? '#4a9eff' : team === 'b' ? '#ff4a4a' : '#8899bb';
 
       // 名前 + HOSTバッジ
-      let nameHtml = `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
-      if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
-
-      // チーム表示バッジ
-      const badgeBg = team === 'a' ? '#1a3a6a' : team === 'b' ? '#6a1a1a' : '#2a2a3a';
-      nameHtml = `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor};">${teamLabel}</span>` + nameHtml;
+      let nameHtml = '';
 
       if (_isHost) {
-        // A軍ボタンの有効/無効
+        // ホスト: ボタンを左に配置、バッジなし
         const canA = team === 'a' || fixedA < maxPerTeam;
         const canB = team === 'b' || fixedB < maxPerTeam;
-        const btnStyle = (active, color) => `padding:3px 8px; font-size:10px; font-weight:700; border-radius:3px; cursor:pointer; border:1px solid ${active ? color : '#2a3a52'}; background:${active ? color + '22' : 'transparent'}; color:${active ? color : '#556'};${active ? '' : ' opacity:0.9;'}`;
-        const disabledAttr = (enabled) => enabled ? '' : ' disabled style="opacity:0.3; cursor:not-allowed;"';
+        const btnStyle = (active, color) => `padding:3px 8px; font-size:10px; font-weight:700; border-radius:3px; cursor:pointer; border:1px solid ${active ? color : '#2a3a52'}; background:${active ? color + '22' : 'transparent'}; color:${active ? color : '#556'};`;
 
-        nameHtml += `<span style="margin-left:auto; display:flex; gap:4px;">`;
+        nameHtml += `<span style="display:flex; gap:3px; flex-shrink:0;">`;
         nameHtml += `<button style="${btnStyle(team==='auto','#8899bb')}" onclick="lobbySetTeam('${pid}','auto')">自動</button>`;
-        nameHtml += `<button style="${btnStyle(team==='a','#4a9eff')}"${!canA && team!=='a' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','a')">A軍</button>`;
-        nameHtml += `<button style="${btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
+        nameHtml += `<button style="${btnStyle(team==='a','#4a9eff')}"${!canA && team!=='a' ? ' disabled style="opacity:0.3;cursor:not-allowed;'+btnStyle(false,'#4a9eff')+'"' : ''} onclick="lobbySetTeam('${pid}','a')">A軍</button>`;
+        nameHtml += `<button style="${btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled style="opacity:0.3;cursor:not-allowed;'+btnStyle(false,'#ff4a4a')+'"' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
         nameHtml += `</span>`;
+        nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
+        if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
       } else {
-        // ゲストは自分のチーム状態だけ表示（変更不可）
+        // ゲスト: バッジを左に表示（変更不可）
+        const badgeBg = team === 'a' ? '#1a3a6a' : team === 'b' ? '#6a1a1a' : '#2a2a3a';
+        nameHtml += `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor};">${teamLabel}</span>`;
+        nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
+        if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
       }
 
       row.innerHTML = nameHtml;
