@@ -986,7 +986,7 @@
   /* フッターエリア（ルール・カード・ゲーム開始） */
   #ms-footer {
     flex-shrink: 0; display: grid;
-    grid-template-columns: 1fr 1fr 1fr; gap: 0;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 0;
     border-top: 1px solid #1e2a42;
   }
   .ms-footer-btn {
@@ -1207,6 +1207,7 @@
     background: rgba(15, 20, 35, 0.95);
     border: 2px solid #1e2a42; border-radius: 16px;
     box-shadow: 0 0 60px rgba(0,0,0,0.5);
+    margin-bottom: 30px;
   }
   .lobby-title {
     font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 900;
@@ -1286,7 +1287,7 @@
   <div id="ms-logo-area">
     <img src="images/title_logo.png" alt="起動戦士ゼーコガンニョム">
   </div>
-  <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
+  <div style="display:flex; flex-direction:column; flex:1; min-width:0; min-height:0;">
     <!-- ステップ1: モード選択 -->
     <div id="ms-mode-select" style="display:flex; flex-direction:column; flex:1; justify-content:center; align-items:center; gap:12px; padding:16px;">
       <button class="ms-footer-btn" onclick="openInfoModal('rule-modal')" style="width:80%; padding:10px;">ルール説明</button>
@@ -1296,7 +1297,7 @@
     </div>
 
     <!-- ステップ2: 1人用設定画面 -->
-    <div id="ms-solo-setup" style="display:none; flex-direction:column; flex:1;">
+    <div id="ms-solo-setup" style="display:none; flex-direction:column; flex:1; min-height:0;">
       <div id="ms-config-area">
         <div class="ms-section">
           <div class="ms-label">所属選択</div>
@@ -1655,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.0</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.1</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
