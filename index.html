@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.1</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.2</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1960,40 +1960,47 @@ const OnlineLobby = (() => {
     const entries = Object.entries(players);
     _playerCount = entries.length;
 
-    // A軍・B軍に分けて表示
-    const teamA = entries.filter(([,p]) => p.team === 'a');
-    const teamB = entries.filter(([,p]) => p.team === 'b');
+    // 現在の固定数を集計
+    const fixedA = entries.filter(([,p]) => p.team === 'a').length;
+    const fixedB = entries.filter(([,p]) => p.team === 'b').length;
+    const maxPerTeam = _lobbyMatch; // 1vs1→1, 2vs2→2, 3vs3→3
 
-    function renderTeamSection(label, teamClass, members) {
-      const header = document.createElement('div');
-      header.style.cssText = 'font-size:12px; font-weight:900; letter-spacing:1px; padding:4px 0; margin-top:4px;';
-      header.style.color = teamClass === 'team-a' ? '#4a9eff' : '#ff4a4a';
-      header.textContent = label;
-      container.appendChild(header);
+    entries.forEach(([pid, p]) => {
+      const row = document.createElement('div');
+      row.className = 'lobby-player-row';
+      row.style.cssText = 'flex-wrap:wrap; gap:6px;';
 
-      if (members.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'font-size:11px; color:#445; padding:2px 8px; font-style:italic;';
-        empty.textContent = '（なし）';
-        container.appendChild(empty);
-        return;
+      const team = p.team || 'auto';
+      const teamLabel = team === 'a' ? 'A軍' : team === 'b' ? 'B軍' : '自動';
+      const teamColor = team === 'a' ? '#4a9eff' : team === 'b' ? '#ff4a4a' : '#8899bb';
+
+      // 名前 + HOSTバッジ
+      let nameHtml = `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
+      if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
+
+      // チーム表示バッジ
+      const badgeBg = team === 'a' ? '#1a3a6a' : team === 'b' ? '#6a1a1a' : '#2a2a3a';
+      nameHtml = `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor};">${teamLabel}</span>` + nameHtml;
+
+      if (_isHost) {
+        // A軍ボタンの有効/無効
+        const canA = team === 'a' || fixedA < maxPerTeam;
+        const canB = team === 'b' || fixedB < maxPerTeam;
+        const btnStyle = (active, color) => `padding:3px 8px; font-size:10px; font-weight:700; border-radius:3px; cursor:pointer; border:1px solid ${active ? color : '#2a3a52'}; background:${active ? color + '22' : 'transparent'}; color:${active ? color : '#556'};${active ? '' : ' opacity:0.9;'}`;
+        const disabledAttr = (enabled) => enabled ? '' : ' disabled style="opacity:0.3; cursor:not-allowed;"';
+
+        nameHtml += `<span style="margin-left:auto; display:flex; gap:4px;">`;
+        nameHtml += `<button style="${btnStyle(team==='auto','#8899bb')}" onclick="lobbySetTeam('${pid}','auto')">自動</button>`;
+        nameHtml += `<button style="${btnStyle(team==='a','#4a9eff')}"${!canA && team!=='a' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','a')">A軍</button>`;
+        nameHtml += `<button style="${btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
+        nameHtml += `</span>`;
+      } else {
+        // ゲストは自分のチーム状態だけ表示（変更不可）
       }
 
-      members.forEach(([pid, p]) => {
-        const row = document.createElement('div');
-        row.className = 'lobby-player-row';
-        row.innerHTML = `
-          <span class="lobby-player-team ${teamClass}">${teamClass === 'team-a' ? 'A' : 'B'}</span>
-          <span class="lobby-player-name">${_escHtml(p.name || '???')}</span>
-          ${p.isHost ? '<span class="lobby-player-host">HOST</span>' : ''}
-          ${_isHost ? `<button class="lobby-btn" style="padding:2px 8px; font-size:10px;" onclick="lobbyToggleTeam('${pid}')">${teamClass === 'team-a' ? 'B軍へ' : 'A軍へ'}</button>` : ''}
-        `;
-        container.appendChild(row);
-      });
-    }
-
-    renderTeamSection('A軍', 'team-a', teamA);
-    renderTeamSection('B軍', 'team-b', teamB);
+      row.innerHTML = nameHtml;
+      container.appendChild(row);
+    });
 
     // ゲーム開始ボタンの有効化（ホストで2人以上）
     if (_isHost) {
@@ -2118,7 +2125,7 @@ const OnlineLobby = (() => {
           [_playerId]: {
             name: lobbyGetPlayerName(),
             isHost: true,
-            team: 'a',
+            team: 'auto',
             stats: { ...lobbyStats },
             joinedAt: firebase.database.ServerValue.TIMESTAMP
           }
@@ -2184,7 +2191,7 @@ const OnlineLobby = (() => {
       await _roomRef.child('players/' + _playerId).set({
         name: lobbyGetPlayerName(),
         isHost: false,
-        team: 'b',
+        team: 'auto',
         stats: { ...lobbyStats },
         joinedAt: firebase.database.ServerValue.TIMESTAMP
       });
@@ -2237,13 +2244,34 @@ const OnlineLobby = (() => {
     getMatch() { return _lobbyMatch; },
     getPlayerCount() { return _playerCount; },
 
-    /** ホストがプレイヤーのチームを切り替え */
-    async togglePlayerTeam(pid) {
+    /** ホストがプレイヤーのチームを設定（'auto'/'a'/'b'） */
+    async setPlayerTeam(pid, team) {
       if (!_isHost || !_roomRef) return;
-      const snap = await _roomRef.child('players/' + pid + '/team').once('value');
-      const current = snap.val();
-      const newTeam = current === 'a' ? 'b' : 'a';
-      await _roomRef.child('players/' + pid + '/team').set(newTeam);
+      await _roomRef.child('players/' + pid + '/team').set(team);
+    },
+
+    /** 対戦形式変更時に上限を超えたチーム固定をautoにリセット */
+    async resetOverflowTeams() {
+      if (!_isHost || !_roomRef) return;
+      const snap = await _roomRef.child('players').once('value');
+      const players = snap.val();
+      if (!players) return;
+      const entries = Object.entries(players);
+      const maxPerTeam = _lobbyMatch;
+      let countA = 0, countB = 0;
+      for (const [pid, p] of entries) {
+        if (p.team === 'a') {
+          countA++;
+          if (countA > maxPerTeam) {
+            await _roomRef.child('players/' + pid + '/team').set('auto');
+          }
+        } else if (p.team === 'b') {
+          countB++;
+          if (countB > maxPerTeam) {
+            await _roomRef.child('players/' + pid + '/team').set('auto');
+          }
+        }
+      }
     },
   };
 })();
@@ -2368,6 +2396,7 @@ function lobbySetMatch(n) {
   for (let i = 0; i < btns.length; i++) {
     btns[i].classList.toggle('selected', i === n - 1);
   }
+  OnlineLobby.resetOverflowTeams();
 }
 function lobbyChangeVP(delta) {
   OnlineLobby.setVP(OnlineLobby.getVP() + delta);
@@ -2382,8 +2411,8 @@ function lobbySetBGM(on) {
   document.getElementById('lobby-bgm-on').classList.remove('selected');
   document.getElementById('lobby-bgm-off').classList.remove('selected');
 }
-function lobbyToggleTeam(pid) {
-  OnlineLobby.togglePlayerTeam(pid);
+function lobbySetTeam(pid, team) {
+  OnlineLobby.setPlayerTeam(pid, team);
 }
 function lobbyStartGame() {
   const count = OnlineLobby.getPlayerCount();
