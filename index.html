@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.3</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.4</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1974,28 +1974,32 @@ const OnlineLobby = (() => {
       const teamLabel = team === 'a' ? 'A軍' : team === 'b' ? 'B軍' : '自動';
       const teamColor = team === 'a' ? '#4a9eff' : team === 'b' ? '#ff4a4a' : '#8899bb';
 
-      // 名前 + HOSTバッジ
+      // ロール表示（ホスト/ゲスト）
+      const roleLabel = p.isHost ? 'ホスト' : 'ゲスト';
+      const roleColor = p.isHost ? '#ffd700' : '#8899bb';
+
       let nameHtml = '';
 
       if (_isHost) {
-        // ホスト: ボタンを左に配置、バッジなし
+        // ホスト画面: [ロール][名前]  ...  [自動][A軍][B軍]
         const canA = team === 'a' || fixedA < maxPerTeam;
         const canB = team === 'b' || fixedB < maxPerTeam;
         const btnStyle = (active, color) => `padding:3px 8px; font-size:10px; font-weight:700; border-radius:3px; cursor:pointer; border:1px solid ${active ? color : '#2a3a52'}; background:${active ? color + '22' : 'transparent'}; color:${active ? color : '#556'};`;
+        const disBtn = (color) => `padding:3px 8px; font-size:10px; font-weight:700; border-radius:3px; cursor:not-allowed; border:1px solid #2a3a52; background:transparent; color:#556; opacity:0.3;`;
 
-        nameHtml += `<span style="display:flex; gap:3px; flex-shrink:0;">`;
+        nameHtml += `<span style="font-size:10px; font-weight:900; color:${roleColor}; flex-shrink:0;">${roleLabel}</span>`;
+        nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
+        nameHtml += `<span style="margin-left:auto; display:flex; gap:3px; flex-shrink:0;">`;
         nameHtml += `<button style="${btnStyle(team==='auto','#8899bb')}" onclick="lobbySetTeam('${pid}','auto')">自動</button>`;
-        nameHtml += `<button style="${btnStyle(team==='a','#4a9eff')}"${!canA && team!=='a' ? ' disabled style="opacity:0.3;cursor:not-allowed;'+btnStyle(false,'#4a9eff')+'"' : ''} onclick="lobbySetTeam('${pid}','a')">A軍</button>`;
-        nameHtml += `<button style="${btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled style="opacity:0.3;cursor:not-allowed;'+btnStyle(false,'#ff4a4a')+'"' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
+        nameHtml += `<button style="${!canA && team!=='a' ? disBtn('#4a9eff') : btnStyle(team==='a','#4a9eff')}"${!canA && team!=='a' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','a')">A軍</button>`;
+        nameHtml += `<button style="${!canB && team!=='b' ? disBtn('#ff4a4a') : btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
         nameHtml += `</span>`;
-        nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
-        if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
       } else {
-        // ゲスト: バッジを左に表示（変更不可）
+        // ゲスト画面: [チームバッジ][名前]  ...  [ロール]
         const badgeBg = team === 'a' ? '#1a3a6a' : team === 'b' ? '#6a1a1a' : '#2a2a3a';
-        nameHtml += `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor};">${teamLabel}</span>`;
+        nameHtml += `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor}; flex-shrink:0;">${teamLabel}</span>`;
         nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
-        if (p.isHost) nameHtml += '<span class="lobby-player-host">HOST</span>';
+        nameHtml += `<span style="margin-left:auto; font-size:10px; font-weight:900; color:${roleColor}; flex-shrink:0;">${roleLabel}</span>`;
       }
 
       row.innerHTML = nameHtml;
@@ -2180,6 +2184,17 @@ const OnlineLobby = (() => {
         statusEl.textContent = 'この部屋はすでにゲーム中です';
         statusEl.className = 'lobby-status error';
         return;
+      }
+
+      // 同名プレイヤーチェック
+      const myName = lobbyGetPlayerName();
+      if (room.players) {
+        const existingNames = Object.values(room.players).map(p => p.name);
+        if (existingNames.includes(myName)) {
+          statusEl.textContent = '同じ名前のプレイヤーがすでに参加しています';
+          statusEl.className = 'lobby-status error';
+          return;
+        }
       }
 
       _playerId = _generatePlayerId();
