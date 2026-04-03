@@ -1655,7 +1655,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.4.9</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2067,14 +2067,11 @@ const OnlineLobby = (() => {
     gameConfig.victoryPoints = data.vp || 10;
     gameConfig.turnLimit = (data.vp || 10) * 3;
 
-    // プレイヤー名・ステータスの設定
-    // （現時点ではタイトル画面の設定をそのまま使う）
-    const nameEl = isMobile()
-      ? document.getElementById('ms-player-name')
-      : document.getElementById('ss-player-name');
-    gameConfig.playerName = (nameEl && nameEl.value.trim()) || 'Player';
-    gameConfig.playerTeam = ssTeam;
-    gameConfig.playerStats = { ...ssStats };
+    // プレイヤー名・ステータスの設定（ロビーの入力値を使用）
+    const lobbyNameEl = document.getElementById('lobby-player-name');
+    gameConfig.playerName = (lobbyNameEl && lobbyNameEl.value.trim()) || 'Player';
+    gameConfig.playerTeam = ssTeam;  // TODO: ロビーのチーム割り振りから設定
+    gameConfig.playerStats = { tech: lobbyStats.tech, react: lobbyStats.react, spirit: lobbyStats.spirit };
 
     // BGM
     if (data.bgm) _bgm.play(2); else _bgm.stop();
@@ -3615,6 +3612,9 @@ function msInit() {
   document.getElementById('ms-start-screen').classList.add('active');
   document.getElementById('app').style.display = 'none';
   document.getElementById('ms-app').classList.remove('active');
+  // モード選択画面に戻す
+  document.getElementById('ms-mode-select').style.display = 'flex';
+  document.getElementById('ms-solo-setup').style.display = 'none';
 }
 
 function msSelectTeam(t) {
@@ -4008,6 +4008,9 @@ function returnToTitle() {
   } else {
     document.getElementById('start-screen').classList.remove('hidden');
     document.getElementById('start-screen').scrollTop = 0;
+    // モード選択画面に戻す
+    document.getElementById('ss-mode-select').style.display = '';
+    document.getElementById('ss-solo-setup').style.display = 'none';
     setButtons([]);
     gs.phase = 'title';
     gs.grid = [];
