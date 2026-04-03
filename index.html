@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.5</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.6</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1995,11 +1995,11 @@ const OnlineLobby = (() => {
         nameHtml += `<button style="${!canB && team!=='b' ? disBtn('#ff4a4a') : btnStyle(team==='b','#ff4a4a')}"${!canB && team!=='b' ? ' disabled' : ''} onclick="lobbySetTeam('${pid}','b')">B軍</button>`;
         nameHtml += `</span>`;
       } else {
-        // ゲスト画面: [チームバッジ][名前]  ...  [ロール]
+        // ゲスト画面: [ロール][名前]  ...  [チーム状態]
         const badgeBg = team === 'a' ? '#1a3a6a' : team === 'b' ? '#6a1a1a' : '#2a2a3a';
-        nameHtml += `<span style="font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor}; flex-shrink:0;">${teamLabel}</span>`;
+        nameHtml += `<span style="font-size:10px; font-weight:900; color:${roleColor}; flex-shrink:0;">${roleLabel}</span>`;
         nameHtml += `<span class="lobby-player-name">${_escHtml(p.name || '???')}</span>`;
-        nameHtml += `<span style="margin-left:auto; font-size:10px; font-weight:900; color:${roleColor}; flex-shrink:0;">${roleLabel}</span>`;
+        nameHtml += `<span style="margin-left:auto; font-size:10px; font-weight:900; padding:2px 6px; border-radius:3px; background:${badgeBg}; color:${teamColor}; flex-shrink:0;">${teamLabel}</span>`;
       }
 
       row.innerHTML = nameHtml;
