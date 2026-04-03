@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.4</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.5</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -3903,6 +3903,8 @@ function msRenderMissions(el) {
       const badge = document.createElement('div');
       badge.className = 'ms-done-badge';
       badge.textContent = `${cm.completedBy === 'a' ? 'A軍' : 'B軍'} 達成`;
+      badge.style.color = cm.completedBy === 'a' ? '#4a9eff' : '#ff4a4a';
+      badge.style.borderColor = cm.completedBy === 'a' ? 'rgba(74,158,255,0.5)' : 'rgba(255,74,74,0.5)';
       div.appendChild(badge);
     }
     commonRow.appendChild(div);
@@ -3950,6 +3952,8 @@ function msRenderMissions(el) {
       const badge = document.createElement('div');
       badge.className = 'ms-done-badge';
       badge.textContent = '達成';
+      badge.style.color = myTeam === 'a' ? '#4a9eff' : '#ff4a4a';
+      badge.style.borderColor = myTeam === 'a' ? 'rgba(74,158,255,0.5)' : 'rgba(255,74,74,0.5)';
       div.appendChild(badge);
     } else {
       div.appendChild(img);
