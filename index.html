@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.1</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.2</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -5477,12 +5477,19 @@ function updateTurnInfo() {
   document.getElementById('dice-display').textContent = gs.diceValue || '—';
 }
 
-function setButtons(btns) {
+// オンライン同期用: 現在操作が求められているプレイヤーを追跡
+let _currentActingPlayer = null;
+
+function setButtons(btns, actingPlayer) {
+  // actingPlayerが指定されていればグローバルに記録
+  if (actingPlayer !== undefined) _currentActingPlayer = actingPlayer;
+
   const c = document.getElementById('action-buttons');
   c.innerHTML = '';
 
   // オンライン対戦でリモート人間の操作待ちか判定
-  const isRemoteHumanAction = OnlineSync.active && btns.length > 0 && _isRemoteHumanActing();
+  const actingP = _currentActingPlayer || (typeof getCurrentPlayer === 'function' ? getCurrentPlayer() : null);
+  const isRemoteHumanAction = OnlineSync.active && btns.length > 0 && actingP && !actingP.isLocal && !actingP.ai;
 
   for (let i = 0; i < btns.length; i++) {
     const b = btns[i];
@@ -5504,29 +5511,48 @@ function setButtons(btns) {
 
   // リモート人間の操作を待って自動実行
   if (isRemoteHumanAction) {
-    _setStatusMessage('相手の操作を待っています...');
+    _setStatusMessage(`${actingP.name} の操作を待っています...`);
     OnlineSync.waitForRemoteAction().then(action => {
+      _clearStatusMessage();
       if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
         const targetIdx = action.data.index;
         if (targetIdx >= 0 && targetIdx < btns.length) {
-          _clearStatusMessage();
           btns[targetIdx].action();
         }
+      } else if (action.type === 'hex') {
+        _processHexClick({ col: action.data.col, row: action.data.row });
       }
     });
   }
 }
 
-/** リモート人間がアクション中かどうか判定 */
+/** 今操作が求められているプレイヤーがリモート人間かどうか判定 */
 function _isRemoteHumanActing() {
-  const cp = getCurrentPlayer ? getCurrentPlayer() : null;
-  if (!cp) return false;
-  if (!cp.isLocal && !cp.ai) return true;
-  if (gs.phase === 'pre_damage') {
-    const defender = typeof attackCtx !== 'undefined' ? attackCtx.target : null;
-    if (defender && !defender.isLocal && !defender.ai) return true;
+  if (!gameConfig._isOnline) return false;
+
+  // セットアップ/リスポーン中: respawningPlayerが対象
+  if (gs.respawningPlayer) {
+    const p = gs.respawningPlayer;
+    return !p.isLocal && !p.ai;
   }
-  return false;
+
+  // 戦闘中の防御者フェーズ
+  if (gs.phase === 'pre_damage' && typeof attackCtx !== 'undefined' && attackCtx.target) {
+    // 防御者のスキル使用待ちか判定（回避・防御ボタンが出ている場合）
+    const defender = attackCtx.target;
+    if (!defender.isLocal && !defender.ai) return true;
+  }
+
+  // 通常のターンプレイヤー
+  const cp = typeof getCurrentPlayer === 'function' ? getCurrentPlayer() : null;
+  if (!cp) return false;
+  return !cp.isLocal && !cp.ai;
+}
+
+/** 特定のプレイヤーがリモート人間かどうか判定 */
+function _isRemoteHuman(player) {
+  if (!gameConfig._isOnline) return false;
+  return !player.isLocal && !player.ai;
 }
 
 /** リモート人間のヘックスクリック待ちを開始（move/shoot/melee/setup/respawn等） */
@@ -7741,8 +7767,34 @@ function beginNormalTurn(cp) {
     // CPU → 自動処理
     setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
   } else {
-    // リモート人間 → UIを表示して操作を待つ（setButtons内で自動待ち）
+    // リモート人間 → 同じUIを表示（操作はFirebase経由で受信）
     showPreRollChoice(cp);
+  }
+}
+
+/** リモート人間の操作をFirebaseから受信して処理する汎用関数 */
+function _waitForRemoteAndProcess() {
+  if (!OnlineSync.active) return;
+  OnlineSync.waitForRemoteAction().then(action => {
+    _clearStatusMessage();
+    if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
+      // ボタン操作 — 対応するactionを探して実行
+      // setButtonsで設定されたbtnsにアクセスできないので、
+      // リモート側でも同じUI関数を呼んでボタンを生成し、対応するものを実行
+      _replayRemoteButton(action.data.index);
+    } else if (action.type === 'hex') {
+      _processHexClick({ col: action.data.col, row: action.data.row });
+    }
+  });
+}
+
+/** リモートのボタン操作を再現 */
+function _replayRemoteButton(index) {
+  // action-buttonsの子要素からボタンを取得してクリック
+  const c = document.getElementById('action-buttons');
+  const buttons = c ? c.querySelectorAll('button') : [];
+  if (index >= 0 && index < buttons.length) {
+    buttons[index].click();
   }
 }
 
