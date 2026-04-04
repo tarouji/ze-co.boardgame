@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.0</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.1</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2098,6 +2098,7 @@ const OnlineLobby = (() => {
 
     // シードを設定してゲーム開始
     gs._onlineSeed = data.seed;
+    OnlineSync.start(_roomCode);
     startGame();
     if (isMobile()) msShowGame();
   }
@@ -2329,6 +2330,75 @@ const OnlineLobby = (() => {
         }
       }
     },
+  };
+})();
+
+// ============================================================
+// ONLINE ACTION SYNC — 操作同期モジュール
+// ============================================================
+const OnlineSync = (() => {
+  let _actionRef = null;   // Firebase ref for actions
+  let _actionCounter = 0;  // 操作カウンター（順序保証）
+  let _listeners = [];
+  let _pendingResolve = null; // リモート操作待ちのPromise resolver
+  let _active = false;
+
+  /** 操作同期を開始（ゲーム開始時に呼ぶ） */
+  function start(roomCode) {
+    if (!roomCode || !gameConfig._isOnline) return;
+    _actionRef = fbDb.ref('rooms/' + roomCode + '/actions');
+    _actionCounter = 0;
+    _active = true;
+
+    // リモート操作の受信リスナー
+    const onAction = _actionRef.on('child_added', snap => {
+      const action = snap.val();
+      if (!action || action.from === gameConfig._onlinePlayerId) return; // 自分の操作は無視
+      if (_pendingResolve) {
+        const resolve = _pendingResolve;
+        _pendingResolve = null;
+        resolve(action);
+      }
+    });
+    _listeners.push(() => _actionRef.off('child_added', onAction));
+    console.log('[OnlineSync] Started for room:', roomCode);
+  }
+
+  /** 操作同期を停止 */
+  function stop() {
+    _listeners.forEach(fn => fn());
+    _listeners = [];
+    _actionRef = null;
+    _active = false;
+    _pendingResolve = null;
+  }
+
+  /** ローカル操作をFirebaseに送信 */
+  async function sendAction(type, data) {
+    if (!_active || !_actionRef) return;
+    _actionCounter++;
+    await _actionRef.push({
+      from: gameConfig._onlinePlayerId,
+      seq: _actionCounter,
+      type: type,  // 'button' or 'hex' or 'overlay_click'
+      data: data,
+      timestamp: firebase.database.ServerValue.TIMESTAMP
+    });
+  }
+
+  /** リモート操作を待つ（Promiseを返す） */
+  function waitForRemoteAction() {
+    return new Promise(resolve => {
+      _pendingResolve = resolve;
+    });
+  }
+
+  return {
+    start,
+    stop,
+    sendAction,
+    waitForRemoteAction,
+    get active() { return _active; },
   };
 })();
 
@@ -4923,6 +4993,12 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
       }
     };
     overlay.addEventListener('click', handler);
+    // オンライン対戦時: 1.5秒後に自動で閉じる（同期ズレ防止）
+    if (gameConfig._isOnline) {
+      setTimeout(() => {
+        if (overlay.classList.contains('active')) handler();
+      }, 1500);
+    }
   }, 200);
 }
 
@@ -5404,15 +5480,84 @@ function updateTurnInfo() {
 function setButtons(btns) {
   const c = document.getElementById('action-buttons');
   c.innerHTML = '';
-  for (const b of btns) {
+
+  // オンライン対戦でリモート人間の操作待ちか判定
+  const isRemoteHumanAction = OnlineSync.active && btns.length > 0 && _isRemoteHumanActing();
+
+  for (let i = 0; i < btns.length; i++) {
+    const b = btns[i];
+    const idx = i;
     const e = document.createElement('button');
     e.className = `btn ${b.cls||'btn-primary'}`;
     e.textContent = b.text;
-    e.disabled = !!b.disabled;
-    e.onclick = b.action;
+    e.disabled = !!b.disabled || isRemoteHumanAction;
+    e.onclick = () => {
+      if (OnlineSync.active && !isRemoteHumanAction) {
+        // ローカル操作をFirebaseに送信
+        OnlineSync.sendAction('button', { index: idx });
+      }
+      b.action();
+    };
     c.appendChild(e);
   }
   if (isMobile()) msSetButtons(btns);
+
+  // リモート人間の操作を待って自動実行
+  if (isRemoteHumanAction) {
+    _setStatusMessage('相手の操作を待っています...');
+    OnlineSync.waitForRemoteAction().then(action => {
+      if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
+        const targetIdx = action.data.index;
+        if (targetIdx >= 0 && targetIdx < btns.length) {
+          _clearStatusMessage();
+          btns[targetIdx].action();
+        }
+      }
+    });
+  }
+}
+
+/** リモート人間がアクション中かどうか判定 */
+function _isRemoteHumanActing() {
+  const cp = getCurrentPlayer ? getCurrentPlayer() : null;
+  if (!cp) return false;
+  if (!cp.isLocal && !cp.ai) return true;
+  if (gs.phase === 'pre_damage') {
+    const defender = typeof attackCtx !== 'undefined' ? attackCtx.target : null;
+    if (defender && !defender.isLocal && !defender.ai) return true;
+  }
+  return false;
+}
+
+/** リモート人間のヘックスクリック待ちを開始（move/shoot/melee/setup/respawn等） */
+function _startRemoteHexWait() {
+  if (!OnlineSync.active || !_isRemoteHumanActing()) return;
+  _setStatusMessage('相手の操作を待っています...');
+  OnlineSync.waitForRemoteAction().then(action => {
+    _clearStatusMessage();
+    if (action.type === 'hex') {
+      _processHexClick({ col: action.data.col, row: action.data.row });
+    } else if (action.type === 'button') {
+      // ヘックス待ち中にボタン（戻る等）が押された場合
+      // setButtons内のbtnsを再取得するのは難しいので、再度waitを開始
+      // （実際にはsetButtonsのリモート待ちが処理する）
+    }
+  });
+}
+
+function _setStatusMessage(msg) {
+  const el = document.getElementById('message-area');
+  if (el) {
+    const mt = el.querySelector('.message-text');
+    if (mt) mt.textContent = msg;
+  }
+}
+function _clearStatusMessage() {
+  const el = document.getElementById('message-area');
+  if (el) {
+    const mt = el.querySelector('.message-text');
+    if (mt) mt.textContent = '';
+  }
 }
 
 function addLog(text, type='') {
@@ -7458,14 +7603,13 @@ function processSetupQueue() {
   }
 
   if (player.isLocal) {
-    // Human picks spawn
+    // ローカル人間 → ヘックス選択UI
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
-    
     updateAll();
     setButtons([]);
-  } else {
-    // CPU picks random spawn (0.5秒ディレイ後に出撃)
+  } else if (player.ai) {
+    // CPU → 自動選択
     setTimeout(() => {
       const sp = avail[Math.floor(seededRandom() * avail.length)];
       const id = player.team === 'a' ? 's01' : 's02';
@@ -7476,6 +7620,21 @@ function processSetupQueue() {
       updateAll();
       setTimeout(() => processSetupQueue(), 200);
     }, 500);
+  } else {
+    // リモート人間 → ヘックス選択を待つ
+    gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
+    gs.respawningPlayer = player;
+    updateAll();
+    setButtons([]);
+    if (OnlineSync.active) {
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.waitForRemoteAction().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   }
 }
 
@@ -7575,8 +7734,16 @@ function beginNormalTurn(cp) {
   resetTurnBuffs();
   gs.phase = 'pre_roll'; gs.diceValue = null;
   updateAll();
-  if (!cp.isLocal) setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
-  else showPreRollChoice(cp);
+  if (cp.isLocal) {
+    // ローカル人間 → UI表示
+    showPreRollChoice(cp);
+  } else if (cp.ai) {
+    // CPU → 自動処理
+    setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
+  } else {
+    // リモート人間 → UIを表示して操作を待つ（setButtons内で自動待ち）
+    showPreRollChoice(cp);
+  }
 }
 
 // === PHASE (1): Before rolling action dice ===
@@ -7708,6 +7875,7 @@ function startMeleePhase(returnPhase) {
   }
   updateAll();
   setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelMelee() }]);
+  _startRemoteHexWait();
 }
 
 function cancelMelee() {
@@ -9267,6 +9435,7 @@ function startMovePhase() {
   gs.phase = 'move';
   updateAll();
   setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }]);
+  _startRemoteHexWait();
 }
 
 function startShootPhase() {
@@ -9295,6 +9464,7 @@ function startShootPhase() {
   }
   gs.phase = 'shoot'; updateAll();
   setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }]);
+  _startRemoteHexWait();
 }
 
 function cancelAction() {
@@ -9731,16 +9901,14 @@ function handleRespawn(player) {
   if (player.isLocal) {
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
-    
     updateAll();
     setButtons([]);
-  } else {
+  } else if (player.ai) {
     // CPU: pick spawn hex, then choose best unit
     const sp = avail[Math.floor(seededRandom()*avail.length)];
     const unitId = cpuChooseRespawnUnit(player);
     let usedCardId = null;
     if (unitId !== (player.team === 'a' ? 's01' : 's02')) {
-      // Used a card — find it
       usedCardId = player.hand.find(cid => {
         const card = CARD_DB[cid];
         return card.type === 'unit' && card.unitId === unitId;
@@ -9753,6 +9921,21 @@ function handleRespawn(player) {
     addSpawnPopup(sp[0], sp[1], true);
     updateAll();
     setTimeout(() => beginNormalTurn(player), 300);
+  } else {
+    // リモート人間 → ヘックス選択＋ユニット選択を待つ
+    gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
+    gs.respawningPlayer = player;
+    updateAll();
+    setButtons([]);
+    if (OnlineSync.active) {
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.waitForRemoteAction().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   }
 }
 
@@ -10646,6 +10829,20 @@ canvas.addEventListener('click', e => {
   const scaleY = canvas.height / r.height;
   const hex = pixelToHex((e.clientX - r.left) * scaleX, (e.clientY - r.top) * scaleY);
   if (!hex) return;
+
+  // オンライン対戦でリモート人間のターンならクリックを無視
+  if (OnlineSync.active && _isRemoteHumanActing()) return;
+
+  // ローカル操作をFirebaseに送信
+  if (OnlineSync.active) {
+    OnlineSync.sendAction('hex', { col: hex.col, row: hex.row });
+  }
+
+  _processHexClick(hex);
+});
+
+/** ヘックスクリックの処理（ローカル・リモート共通） */
+function _processHexClick(hex) {
   if (gs.phase === 'event_move' && gs.spawnChoices.length > 0 && gs._eventMoveCallback) {
     const valid = gs.spawnChoices.find(h => h.col === hex.col && h.row === hex.row);
     if (valid) {
@@ -10719,7 +10916,7 @@ canvas.addEventListener('click', e => {
       if (zoomImg) showCardZoom(zoomImg);
     }
   }
-});
+}
 
 // タッチデバイス：タップをクリックとして処理
 let _touchStartX = 0, _touchStartY = 0;
