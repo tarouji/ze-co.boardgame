@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.5.6</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2079,11 +2079,19 @@ const OnlineLobby = (() => {
     gameConfig.victoryPoints = data.vp || 10;
     gameConfig.turnLimit = (data.vp || 10) * 3;
 
+    // Firebaseのプレイヤー情報から自分のチームを取得
+    const myData = data.players ? data.players[_playerId] : null;
+    gameConfig.playerTeam = myData ? myData.team : 'a';
+
     // プレイヤー名・ステータスの設定（ロビーの入力値を使用）
     const lobbyNameEl = document.getElementById('lobby-player-name');
     gameConfig.playerName = (lobbyNameEl && lobbyNameEl.value.trim()) || 'Player';
-    gameConfig.playerTeam = ssTeam;  // TODO: ロビーのチーム割り振りから設定
     gameConfig.playerStats = { tech: lobbyStats.tech, react: lobbyStats.react, spirit: lobbyStats.spirit };
+
+    // オンラインプレイヤー情報を保存（initPlayersOnlineで使用）
+    gameConfig._onlinePlayers = data.players || {};
+    gameConfig._onlinePlayerId = _playerId;
+    gameConfig._isOnline = true;
 
     // BGM
     if (data.bgm) _bgm.play(2); else _bgm.stop();
@@ -2229,12 +2237,45 @@ const OnlineLobby = (() => {
     async startGame() {
       if (!_isHost || !_roomRef) return;
       const seed = Date.now() ^ 0xDEADBEEF ^ Math.floor(Math.random() * 0xFFFFFF);
+
+      // autoのチーム割り振りを解決
+      const snap = await _roomRef.child('players').once('value');
+      const players = snap.val() || {};
+      const entries = Object.entries(players);
+      const maxPerTeam = _lobbyMatch;
+
+      // 固定済みとautoを分離
+      const fixedA = entries.filter(([,p]) => p.team === 'a');
+      const fixedB = entries.filter(([,p]) => p.team === 'b');
+      const autos = entries.filter(([,p]) => p.team === 'auto' || !p.team);
+
+      // autoをランダムに割り振り（seededRandomではなくMath.randomで — ゲーム前なので）
+      const shuffledAutos = [...autos].sort(() => Math.random() - 0.5);
+      const resolvedPlayers = {};
+      let countA = fixedA.length, countB = fixedB.length;
+
+      // 固定プレイヤーをそのままコピー
+      for (const [pid, p] of fixedA) resolvedPlayers[pid] = { ...p, team: 'a' };
+      for (const [pid, p] of fixedB) resolvedPlayers[pid] = { ...p, team: 'b' };
+
+      // autoプレイヤーを空きに割り振り
+      for (const [pid, p] of shuffledAutos) {
+        if (countA < maxPerTeam) {
+          resolvedPlayers[pid] = { ...p, team: 'a' };
+          countA++;
+        } else {
+          resolvedPlayers[pid] = { ...p, team: 'b' };
+          countB++;
+        }
+      }
+
       await _roomRef.child('gameStart').set({
         started: true,
         seed: seed,
         matchSize: _lobbyMatch,
         vp: _lobbyVP,
         bgm: _lobbyBGM,
+        players: resolvedPlayers,  // チーム解決済みの全プレイヤー情報
         timestamp: firebase.database.ServerValue.TIMESTAMP
       });
     },
@@ -3626,6 +3667,7 @@ function ssStartGame() {
   gameConfig.matchSize = ssMatchSize;
   gameConfig.victoryPoints = ssVP;
   gameConfig.turnLimit = ssVP * 3;
+  gameConfig._isOnline = false;  // 1人用モード
 
   if (isMobile()) {
     document.getElementById('ms-start-screen').classList.remove('active');
@@ -4600,6 +4642,92 @@ function initPlayers() {
   // Save selection for rematch
   gs._lastCpuSelection = { allyCPUs: allyCPUs.length > 0 ? gs.players.filter(p => !p.isLocal && p.team === pTeam).map(p => ({ name:p.name, tech:p.stats.tech, react:p.stats.react, spirit:p.stats.spirit, ai:p.ai })) : [],
     enemyCPUs: gs.players.filter(p => p.team === eTeam).map(p => ({ name:p.name, tech:p.stats.tech, react:p.stats.react, spirit:p.stats.spirit, ai:p.ai })) };
+}
+
+// Online: initialize players from Firebase lobby data
+function initPlayersOnline() {
+  gs.players = [];
+  gs.thirdForce = [];
+  const onlinePlayers = gameConfig._onlinePlayers;
+  const myPid = gameConfig._onlinePlayerId;
+  const size = gameConfig.matchSize; // 各軍の人数
+
+  // Firebaseのプレイヤーを配列化
+  const humans = Object.entries(onlinePlayers);
+  const teamAHumans = humans.filter(([,p]) => p.team === 'a');
+  const teamBHumans = humans.filter(([,p]) => p.team === 'b');
+
+  // A軍の人間プレイヤーを追加
+  for (const [pid, p] of teamAHumans) {
+    gs.players.push({
+      idx: gs.players.length, team: 'a',
+      name: p.name || 'Player',
+      isLocal: pid === myPid,  // 自分のクライアントか
+      stats: p.stats ? { tech: p.stats.tech, react: p.stats.react, spirit: p.stats.spirit } : { tech: 4, react: 4, spirit: 4 },
+      unit: null, destroyed: false, hand: [], ai: null,
+      onlineId: pid  // Firebase ID（操作同期用）
+    });
+  }
+
+  // A軍のCPU枠を埋める
+  const cpuNeededA = size - teamAHumans.length;
+  // B軍の人間プレイヤーを追加
+  for (const [pid, p] of teamBHumans) {
+    gs.players.push({
+      idx: gs.players.length, team: 'b',
+      name: p.name || 'Player',
+      isLocal: pid === myPid,
+      stats: p.stats ? { tech: p.stats.tech, react: p.stats.react, spirit: p.stats.spirit } : { tech: 4, react: 4, spirit: 4 },
+      unit: null, destroyed: false, hand: [], ai: null,
+      onlineId: pid
+    });
+  }
+
+  // B軍のCPU枠を埋める
+  const cpuNeededB = size - teamBHumans.length;
+
+  // CPU選出（全人間プレイヤーの名前と被らないようフィルタ）
+  const humanNames = humans.map(([,p]) => p.name);
+  const available = CPU_PRESETS.filter(c => !humanNames.includes(c.name));
+  const totalCPU = cpuNeededA + cpuNeededB;
+  const selectedCPUs = weightedSelectCPUs(available, totalCPU);
+
+  // A軍CPU
+  for (let i = 0; i < cpuNeededA; i++) {
+    const c = selectedCPUs.shift();
+    if (!c) break;
+    gs.players.push({
+      idx: gs.players.length, team: 'a', name: c.name, isLocal: false,
+      stats: { tech: c.tech, react: c.react, spirit: c.spirit },
+      unit: null, destroyed: false, hand: [], ai: c.ai
+    });
+  }
+
+  // B軍CPU
+  for (let i = 0; i < cpuNeededB; i++) {
+    const c = selectedCPUs.shift();
+    if (!c) break;
+    gs.players.push({
+      idx: gs.players.length, team: 'b', name: c.name, isLocal: false,
+      stats: { tech: c.tech, react: c.react, spirit: c.spirit },
+      unit: null, destroyed: false, hand: [], ai: c.ai
+    });
+  }
+
+  // idx を振り直す
+  gs.players.forEach((p, i) => p.idx = i);
+
+  // Determine turn order: tech + react descending, random tiebreaker
+  const idx = gs.players.map((_, i) => i);
+  const tiebreaker = idx.map(() => seededRandom());
+  idx.sort((a, b) => {
+    const sa = gs.players[a].stats.tech + gs.players[a].stats.react;
+    const sb = gs.players[b].stats.tech + gs.players[b].stats.react;
+    return sb - sa || tiebreaker[b] - tiebreaker[a];
+  });
+  gs.turnOrder = idx;
+
+  console.log('[Online] Players initialized:', gs.players.map(p => `${p.name}(${p.team}${p.isLocal?' LOCAL':p.ai?' CPU:'+p.ai:' REMOTE'})`));
 }
 
 // Rematch: rebuild players from saved selection (same CPUs, fresh state)
@@ -5780,6 +5908,9 @@ function startGame(rematch) {
   if (rematch && gs._lastCpuSelection) {
     // Rematch: reuse same CPU characters
     initPlayersFromSelection(gs._lastCpuSelection);
+  } else if (gameConfig._isOnline) {
+    // Online: initialize from Firebase lobby data
+    initPlayersOnline();
   } else {
     initPlayers();
   }
