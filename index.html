@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.2</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.3</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2347,7 +2347,6 @@ const OnlineSync = (() => {
   // これにより、受信タイミングと消費タイミングのずれを完全に吸収する。
   const _actionBuffer = [];  // 受信バッファ
   let _waitResolve = null;   // consume()待ちのresolver（1つだけ）
-  let _initialLoadDone = false; // child_addedの初期ロード完了フラグ
   let _lastProcessedSeq = {}; // from別の最終処理済みseq（重複防止）
 
   /** 操作同期を開始（ゲーム開始時に呼ぶ） */
@@ -2358,35 +2357,59 @@ const OnlineSync = (() => {
     _active = true;
     _actionBuffer.length = 0;
     _waitResolve = null;
-    _initialLoadDone = false;
     _lastProcessedSeq = {};
 
-    // まず既存データ数を取得し、初期ロード分をスキップする
-    _actionRef.once('value', snap => {
-      const existingCount = snap.numChildren();
-      let loadedCount = 0;
+    // レース対策:
+    // 1. child_addedリスナーを先に登録（受信した全アクションを一時キューに溜める）
+    // 2. once('value')で既存件数を取得
+    // 3. 一時キューから既存分をスキップし、残りをバッファに移す
+    // 4. 以降は通常のバッファ処理
+    const _tempQueue = [];
+    let _skipResolved = false;
+    let _skipCount = 0;
 
-      const onAction = _actionRef.on('child_added', snapshot => {
-        loadedCount++;
-        // 初期ロード分（リスナー登録前に既存だったデータ）はスキップ
-        if (loadedCount <= existingCount) {
-          return;
-        }
+    const onAction = _actionRef.on('child_added', snapshot => {
+      const action = snapshot.val();
+      if (!action || action.from === gameConfig._onlinePlayerId) return;
 
-        const action = snapshot.val();
-        if (!action || action.from === gameConfig._onlinePlayerId) return; // 自分の操作は無視
+      if (!_skipResolved) {
+        // once完了前はすべて一時キューに溜める
+        _tempQueue.push(action);
+        return;
+      }
 
-        // 重複チェック（seqベース）
+      // 重複チェック（seqベース）
+      const fromId = action.from;
+      if (_lastProcessedSeq[fromId] && action.seq <= _lastProcessedSeq[fromId]) {
+        return;
+      }
+      _lastProcessedSeq[fromId] = action.seq;
+
+      console.log('[OnlineSync] Received action:', action.type, action.data, 'seq:', action.seq);
+
+      if (_waitResolve) {
+        const r = _waitResolve;
+        _waitResolve = null;
+        r(action);
+      } else {
+        _actionBuffer.push(action);
+      }
+    });
+    _listeners.push(() => _actionRef.off('child_added', onAction));
+
+    // once('value')で既存件数を取得し、一時キューから既存分をスキップ
+    _actionRef.once('value').then(snap => {
+      _skipCount = snap.numChildren();
+      // 一時キューの先頭 _skipCount 件は既存データなのでスキップ
+      const newActions = _tempQueue.slice(_skipCount);
+      _skipResolved = true;
+
+      // 新規アクションがあればバッファに追加
+      for (const action of newActions) {
         const fromId = action.from;
-        if (_lastProcessedSeq[fromId] && action.seq <= _lastProcessedSeq[fromId]) {
-          console.log('[OnlineSync] Duplicate action skipped:', action.seq);
-          return;
-        }
+        if (_lastProcessedSeq[fromId] && action.seq <= _lastProcessedSeq[fromId]) continue;
         _lastProcessedSeq[fromId] = action.seq;
-
-        console.log('[OnlineSync] Received action:', action.type, action.data, 'seq:', action.seq);
-
-        // バッファに追加 or 待機中のconsumeを解決
+        console.log('[OnlineSync] Received action (from queue):', action.type, action.data, 'seq:', action.seq);
         if (_waitResolve) {
           const r = _waitResolve;
           _waitResolve = null;
@@ -2394,11 +2417,9 @@ const OnlineSync = (() => {
         } else {
           _actionBuffer.push(action);
         }
-      });
-
-      _listeners.push(() => _actionRef.off('child_added', onAction));
-      _initialLoadDone = true;
-      console.log('[OnlineSync] Started for room:', roomCode, '(skipping', existingCount, 'existing actions)');
+      }
+      _tempQueue.length = 0; // 一時キュー解放
+      console.log('[OnlineSync] Started for room:', roomCode, '(skipped', _skipCount, 'existing,', newActions.length, 'queued)');
     });
   }
 
@@ -2412,7 +2433,6 @@ const OnlineSync = (() => {
     if (_waitResolve) {
       _waitResolve = null; // 待機中のPromiseは放棄
     }
-    _initialLoadDone = false;
     _lastProcessedSeq = {};
   }
 
