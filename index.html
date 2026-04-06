@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.6.2</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.2</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2338,10 +2338,17 @@ const OnlineLobby = (() => {
 // ============================================================
 const OnlineSync = (() => {
   let _actionRef = null;   // Firebase ref for actions
-  let _actionCounter = 0;  // 操作カウンター（順序保証）
+  let _actionCounter = 0;  // 送信操作カウンター（順序保証）
   let _listeners = [];
-  let _pendingResolve = null; // リモート操作待ちのPromise resolver
   let _active = false;
+
+  // === バッファベースの受信キュー ===
+  // 受信したアクションをバッファに溜め、consume()で順番に取り出す。
+  // これにより、受信タイミングと消費タイミングのずれを完全に吸収する。
+  const _actionBuffer = [];  // 受信バッファ
+  let _waitResolve = null;   // consume()待ちのresolver（1つだけ）
+  let _initialLoadDone = false; // child_addedの初期ロード完了フラグ
+  let _lastProcessedSeq = {}; // from別の最終処理済みseq（重複防止）
 
   /** 操作同期を開始（ゲーム開始時に呼ぶ） */
   function start(roomCode) {
@@ -2349,19 +2356,50 @@ const OnlineSync = (() => {
     _actionRef = fbDb.ref('rooms/' + roomCode + '/actions');
     _actionCounter = 0;
     _active = true;
+    _actionBuffer.length = 0;
+    _waitResolve = null;
+    _initialLoadDone = false;
+    _lastProcessedSeq = {};
 
-    // リモート操作の受信リスナー
-    const onAction = _actionRef.on('child_added', snap => {
-      const action = snap.val();
-      if (!action || action.from === gameConfig._onlinePlayerId) return; // 自分の操作は無視
-      if (_pendingResolve) {
-        const resolve = _pendingResolve;
-        _pendingResolve = null;
-        resolve(action);
-      }
+    // まず既存データ数を取得し、初期ロード分をスキップする
+    _actionRef.once('value', snap => {
+      const existingCount = snap.numChildren();
+      let loadedCount = 0;
+
+      const onAction = _actionRef.on('child_added', snapshot => {
+        loadedCount++;
+        // 初期ロード分（リスナー登録前に既存だったデータ）はスキップ
+        if (loadedCount <= existingCount) {
+          return;
+        }
+
+        const action = snapshot.val();
+        if (!action || action.from === gameConfig._onlinePlayerId) return; // 自分の操作は無視
+
+        // 重複チェック（seqベース）
+        const fromId = action.from;
+        if (_lastProcessedSeq[fromId] && action.seq <= _lastProcessedSeq[fromId]) {
+          console.log('[OnlineSync] Duplicate action skipped:', action.seq);
+          return;
+        }
+        _lastProcessedSeq[fromId] = action.seq;
+
+        console.log('[OnlineSync] Received action:', action.type, action.data, 'seq:', action.seq);
+
+        // バッファに追加 or 待機中のconsumeを解決
+        if (_waitResolve) {
+          const r = _waitResolve;
+          _waitResolve = null;
+          r(action);
+        } else {
+          _actionBuffer.push(action);
+        }
+      });
+
+      _listeners.push(() => _actionRef.off('child_added', onAction));
+      _initialLoadDone = true;
+      console.log('[OnlineSync] Started for room:', roomCode, '(skipping', existingCount, 'existing actions)');
     });
-    _listeners.push(() => _actionRef.off('child_added', onAction));
-    console.log('[OnlineSync] Started for room:', roomCode);
   }
 
   /** 操作同期を停止 */
@@ -2370,35 +2408,63 @@ const OnlineSync = (() => {
     _listeners = [];
     _actionRef = null;
     _active = false;
-    _pendingResolve = null;
+    _actionBuffer.length = 0;
+    if (_waitResolve) {
+      _waitResolve = null; // 待機中のPromiseは放棄
+    }
+    _initialLoadDone = false;
+    _lastProcessedSeq = {};
   }
 
   /** ローカル操作をFirebaseに送信 */
   async function sendAction(type, data) {
     if (!_active || !_actionRef) return;
     _actionCounter++;
-    await _actionRef.push({
+    const actionData = {
       from: gameConfig._onlinePlayerId,
       seq: _actionCounter,
       type: type,  // 'button' or 'hex' or 'overlay_click'
       data: data,
       timestamp: firebase.database.ServerValue.TIMESTAMP
-    });
+    };
+    console.log('[OnlineSync] Sending action:', type, data, 'seq:', _actionCounter);
+    await _actionRef.push(actionData);
   }
 
-  /** リモート操作を待つ（Promiseを返す） */
-  function waitForRemoteAction() {
-    return new Promise(resolve => {
-      _pendingResolve = resolve;
-    });
+  /**
+   * リモート操作を1つ消費する（Promiseを返す）
+   * バッファにデータがあれば即解決、なければデータが来るまで待つ。
+   * 
+   * 旧waitForRemoteAction()の代替。キュー方式により:
+   * - 受信タイミングと消費タイミングのずれを吸収
+   * - 複数のwait呼び出しの上書き問題を解消
+   * - ボタン待ちとヘックス待ちの混在を正しく処理
+   */
+  function consume() {
+    if (_actionBuffer.length > 0) {
+      const action = _actionBuffer.shift();
+      console.log('[OnlineSync] Consuming buffered action:', action.type, action.data);
+      return Promise.resolve(action);
+    }
+    console.log('[OnlineSync] Waiting for remote action...');
+    return new Promise(r => { _waitResolve = r; });
+  }
+
+  /** バッファをクリア（ターン切り替え時などに使用） */
+  function clearBuffer() {
+    _actionBuffer.length = 0;
+    _waitResolve = null;
+    console.log('[OnlineSync] Buffer cleared');
   }
 
   return {
     start,
     stop,
     sendAction,
-    waitForRemoteAction,
+    consume,
+    clearBuffer,
     get active() { return _active; },
+    get bufferSize() { return _actionBuffer.length; },
   };
 })();
 
@@ -5111,7 +5177,7 @@ function handleTurnDraw(player) {
     const cardId = drawCard(player);
     if (cardId) {
       const card = CARD_DB[cardId];
-      if (player.isLocal) {
+      if (player.isLocal || _isRemoteHuman(player)) {
         addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'system');
       } else {
         addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'system');
@@ -5480,7 +5546,7 @@ function updateTurnInfo() {
 // オンライン同期用: 現在操作が求められているプレイヤーを追跡
 let _currentActingPlayer = null;
 
-function setButtons(btns, actingPlayer) {
+function setButtons(btns, actingPlayer, skipRemoteWait) {
   // actingPlayerが指定されていればグローバルに記録
   if (actingPlayer !== undefined) _currentActingPlayer = actingPlayer;
 
@@ -5509,21 +5575,35 @@ function setButtons(btns, actingPlayer) {
   }
   if (isMobile()) msSetButtons(btns);
 
-  // リモート人間の操作を待って自動実行
-  if (isRemoteHumanAction) {
+  // リモート人間の操作を待って自動実行（consume方式）
+  // skipRemoteWait=true の場合は呼び出し元が_startRemoteHexWait等で処理するため、ここではconsumeしない
+  if (isRemoteHumanAction && !skipRemoteWait) {
     _setStatusMessage(`${actingP.name} の操作を待っています...`);
-    OnlineSync.waitForRemoteAction().then(action => {
-      _clearStatusMessage();
-      if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
-        const targetIdx = action.data.index;
-        if (targetIdx >= 0 && targetIdx < btns.length) {
-          btns[targetIdx].action();
-        }
-      } else if (action.type === 'hex') {
-        _processHexClick({ col: action.data.col, row: action.data.row });
-      }
-    });
+    _waitForRemoteInput(btns);
   }
+}
+
+/**
+ * リモート人間の入力を待ち、受信したアクションを処理する。
+ * ボタンとヘックスの両方に対応。
+ * consumeベースなのでバッファ済みのアクションも即処理される。
+ */
+function _waitForRemoteInput(btns) {
+  OnlineSync.consume().then(action => {
+    _clearStatusMessage();
+    if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
+      const targetIdx = action.data.index;
+      if (btns && targetIdx >= 0 && targetIdx < btns.length) {
+        btns[targetIdx].action();
+      } else {
+        console.warn('[OnlineSync] Button index out of range:', targetIdx, 'btns.length:', btns ? btns.length : 0);
+      }
+    } else if (action.type === 'hex') {
+      _processHexClick({ col: action.data.col, row: action.data.row });
+    } else {
+      console.warn('[OnlineSync] Unknown action type in _waitForRemoteInput:', action.type);
+    }
+  });
 }
 
 /** 今操作が求められているプレイヤーがリモート人間かどうか判定 */
@@ -5536,9 +5616,13 @@ function _isRemoteHumanActing() {
     return !p.isLocal && !p.ai;
   }
 
-  // 戦闘中の防御者フェーズ
+  // 戦闘中の防御者フェーズ: _currentActingPlayerが設定されていればそれを使う
+  if (_currentActingPlayer) {
+    return !_currentActingPlayer.isLocal && !_currentActingPlayer.ai;
+  }
+
+  // 戦闘中の防御者フェーズ（_currentActingPlayer未設定のフォールバック）
   if (gs.phase === 'pre_damage' && typeof attackCtx !== 'undefined' && attackCtx.target) {
-    // 防御者のスキル使用待ちか判定（回避・防御ボタンが出ている場合）
     const defender = attackCtx.target;
     if (!defender.isLocal && !defender.ai) return true;
   }
@@ -5555,18 +5639,24 @@ function _isRemoteHuman(player) {
   return !player.isLocal && !player.ai;
 }
 
-/** リモート人間のヘックスクリック待ちを開始（move/shoot/melee/setup/respawn等） */
+/**
+ * リモート人間のヘックスクリック待ちを開始（move/shoot/melee/setup/respawn等）
+ * consume方式でバッファ済みのアクションも正しく処理する。
+ * ヘックス待ち中にボタン（戻る等）が来た場合も処理する。
+ */
 function _startRemoteHexWait() {
   if (!OnlineSync.active || !_isRemoteHumanActing()) return;
   _setStatusMessage('相手の操作を待っています...');
-  OnlineSync.waitForRemoteAction().then(action => {
+  OnlineSync.consume().then(action => {
     _clearStatusMessage();
     if (action.type === 'hex') {
       _processHexClick({ col: action.data.col, row: action.data.row });
-    } else if (action.type === 'button') {
+    } else if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
       // ヘックス待ち中にボタン（戻る等）が押された場合
-      // setButtons内のbtnsを再取得するのは難しいので、再度waitを開始
-      // （実際にはsetButtonsのリモート待ちが処理する）
+      // DOMのボタンを直接クリックして処理
+      _replayRemoteButton(action.data.index);
+    } else {
+      console.warn('[OnlineSync] Unexpected action during hex wait:', action.type);
     }
   });
 }
@@ -6604,7 +6694,7 @@ function checkAllHandLimits(callback) {
   function processNext(idx) {
     if (idx >= overLimit.length) { if (callback) callback(); return; }
     const p = overLimit[idx];
-    if (p.isLocal) {
+    if (p.isLocal || _isRemoteHuman(p)) {
       showDiscardExcess(p, () => { updateAll(); processNext(idx + 1); });
     } else {
       cpuDiscardExcess(p);
@@ -6897,7 +6987,7 @@ function eventDrawThenDiscard(player, callback) {
   const drawn = forceDrawCard(player);
   if (!drawn) { addLog('山札からカードを引けなかった。', 'log-progress'); if (callback) callback(); return; }
   addLog(`${player.name} は山札からカードを 1枚 引いた。`, 'log-event');
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     const btns = player.hand.map(cid => {
       const card = CARD_DB[cid];
       return { text: `🗑 ${card.name}`, cls: 'btn-warning', action: () => {
@@ -6909,7 +6999,7 @@ function eventDrawThenDiscard(player, callback) {
     });
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 手札から捨てるカードを選択してください';
     updateAll();
-    setButtons(btns);
+    setButtons(btns, player);
   } else {
     // CPU: discard lowest priority
     const cid = cpuChooseDiscard(player);
@@ -6947,7 +7037,7 @@ function eventDirectAttack(player, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('何も起こらなかった', 'log-event'); if (callback) callback(); return; }
   const dmg = getShootDmg(player.unit, gs.diceValue);
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
       cls: 'btn-warning', action: () => {
@@ -6956,7 +7046,7 @@ function eventDirectAttack(player, callback) {
         if (callback) callback();
       }
     }));
-    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns);
+    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns, player);
   } else {
     // CPU: 敵軍の耐久値が一番高いユニットを選択（同値ならランダム）
     const enemies = targets.filter(t => t.team !== player.team);
@@ -7001,7 +7091,7 @@ function eventScorePoint(player, callback) {
 function eventMoveself(player, callback) {
   const valid = getValidEventHexes();
   if (valid.length === 0) { addLog(`${player.name} は移動できるマスがなかった。（イベント終了）`, 'log-event'); if (callback) callback(); return; }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
     updateAll();
@@ -7015,6 +7105,17 @@ function eventMoveself(player, callback) {
     };
     updateAll();
     setButtons([]);
+    // リモート人間のヘックスクリック待ち
+    if (_isRemoteHuman(player) && OnlineSync.active) {
+      _currentActingPlayer = player;
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.consume().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   } else {
     // CPU: move toward nearest enemy
     const enemies = gs.players.filter(p => p.team !== player.team && !p.destroyed && p.unit);
@@ -7036,7 +7137,7 @@ function eventMoveself(player, callback) {
 function eventMoveOther(player, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('対象がいなかった。（イベント終了）', 'log-event'); if (callback) callback(); return; }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     showEventMoveOtherSelect(player, targets, callback);
   } else {
     const enemies = targets.filter(t => t.team !== player.team);
@@ -7067,13 +7168,13 @@ function showEventMoveOtherSelect(player, targets, callback) {
     }
   }));
   gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 移動させるユニットを選択してください';
-  updateAll(); setButtons(btns);
+  updateAll(); setButtons(btns, player);
 }
 
 function eventMoveselfInternal(target, controller, callback, backFn) {
   const valid = getValidEventHexes();
   if (valid.length === 0) { addLog(`${target.name} は移動できるマスがなかった。（イベント終了）`, 'log-event'); if (callback) callback(); return; }
-  if (controller.isLocal) {
+  if (controller.isLocal || _isRemoteHuman(controller)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
     updateAll();
@@ -7094,9 +7195,22 @@ function eventMoveselfInternal(target, controller, callback, backFn) {
         gs.phase = 'event_effect';
         updateAll();
         backFn();
-      }}]);
+      }}], controller, true);
     } else {
       setButtons([]);
+    }
+    // リモート人間のヘックスクリック待ち
+    if (_isRemoteHuman(controller) && OnlineSync.active) {
+      _currentActingPlayer = controller;
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.consume().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        } else if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
+          _replayRemoteButton(action.data.index);
+        }
+      });
     }
   } else {
     if (callback) callback();
@@ -7133,7 +7247,7 @@ function eventLimit(player, callback) {
 function eventBigAttack(player, dmg, callback) {
   const targets = getAliveOtherUnits(player);
   if (targets.length === 0) { addLog('何も起こらなかった', 'log-event'); if (callback) callback(); return; }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     const btns = targets.map(t => ({
       text: `🔥 ${t.unit.name} 耐久値 ${t.unit.hp} （${t.name}）`,
       cls: 'btn-warning', action: () => {
@@ -7142,7 +7256,7 @@ function eventBigAttack(player, dmg, callback) {
         if (callback) callback();
       }
     }));
-    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns);
+    gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 ダメージを与えるユニットを選択してください'; updateAll(); setButtons(btns, player);
   } else {
     // CPU: 敵軍の耐久値が一番高いユニットを選択（同値ならランダム）
     const enemies = targets.filter(t => t.team !== player.team);
@@ -7165,7 +7279,7 @@ function eventReboot(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     
     const btns = unitCards.map(cid => {
       const card = CARD_DB[cid];
@@ -7177,7 +7291,7 @@ function eventReboot(player, callback) {
       }};
     });
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 捨て札からユニットカードを選択してください';
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, player);
   } else {
     // CPU: pick highest level unit
     const best = unitCards.reduce((b, cid) => {
@@ -7224,7 +7338,7 @@ function eventDiscardDownTo(player, targetCount, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     
     const btns = player.hand.map(cid => {
       const card = CARD_DB[cid];
@@ -7236,7 +7350,7 @@ function eventDiscardDownTo(player, targetCount, callback) {
       }};
     });
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 手札から捨てるカードを選択してください';
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, player);
   } else {
     const discardedNames = [];
     while (player.hand.length > targetCount) {
@@ -7274,7 +7388,7 @@ function eventReclaimFromDiscard(player, remaining, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     
     const btns = gs.discard.map(cid => {
       const card = CARD_DB[cid];
@@ -7292,7 +7406,7 @@ function eventReclaimFromDiscard(player, remaining, callback) {
       if (callback) callback();
     }});
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 捨て札からカードを選択してください';
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, player);
   } else {
     // CPU: pick highest value cards
     const sorted = [...gs.discard].sort((a,b) => {
@@ -7323,7 +7437,7 @@ function eventPressure(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     
     const btns = targets.map(t => ({
       text: `💥 ${t.name}（手札${t.hand.length}枚）`,
@@ -7337,7 +7451,7 @@ function eventPressure(player, callback) {
       }
     }));
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 プレイヤーを選択してください';
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, player);
   } else {
     // CPU: target enemy with most cards
     const enemies = targets.filter(t => t.team !== player.team);
@@ -7392,7 +7506,7 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
     eventRetreatNext(orderedPlayers, idx + 1, spawns, callback);
     return;
   }
-  if (p.isLocal) {
+  if (p.isLocal || _isRemoteHuman(p)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     updateAll();
@@ -7406,6 +7520,17 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
     };
     updateAll();
     setButtons([]);
+    // リモート人間のヘックスクリック待ち
+    if (_isRemoteHuman(p) && OnlineSync.active) {
+      _currentActingPlayer = p;
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.consume().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   } else {
     const sp = avail[Math.floor(seededRandom() * avail.length)];
     p.unit.col = sp[0]; p.unit.row = sp[1];
@@ -7444,7 +7569,7 @@ function eventFalsifyReport(player, callback) {
     if (callback) callback();
     return;
   }
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
     
     const btns = completed.map(cm => {
       const m = MISSION_DB[cm.id];
@@ -7459,7 +7584,7 @@ function eventFalsifyReport(player, callback) {
       }};
     });
     gs.phase = 'event_effect'; gs.currentEventText = '【イベント】 共通ミッションを選択してください';
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, player);
   } else {
     // CPU: undo enemy team's completed mission (prefer own team's for allCommonDone control? No, undo enemy's)
     const enemyCompleted = completed.filter(cm => cm.completedBy !== player.team);
@@ -7597,7 +7722,7 @@ function processSetupQueue() {
           const cardId = forceDrawCard(player);
           if (cardId) {
             const card = CARD_DB[cardId];
-            if (player.isLocal) {
+            if (player.isLocal || _isRemoteHuman(player)) {
               
             } else {
               
@@ -7628,12 +7753,22 @@ function processSetupQueue() {
     return;
   }
 
-  if (player.isLocal) {
-    // ローカル人間 → ヘックス選択UI
+  if (player.isLocal || _isRemoteHuman(player)) {
+    // ローカル人間 or リモート人間 → ヘックス選択UI
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
     updateAll();
     setButtons([]);
+    // リモート人間の場合はFirebase経由のヘックス操作を待つ
+    if (_isRemoteHuman(player) && OnlineSync.active) {
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.consume().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   } else if (player.ai) {
     // CPU → 自動選択
     setTimeout(() => {
@@ -7646,26 +7781,12 @@ function processSetupQueue() {
       updateAll();
       setTimeout(() => processSetupQueue(), 200);
     }, 500);
-  } else {
-    // リモート人間 → ヘックス選択を待つ
-    gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
-    gs.respawningPlayer = player;
-    updateAll();
-    setButtons([]);
-    if (OnlineSync.active) {
-      _setStatusMessage('相手の操作を待っています...');
-      OnlineSync.waitForRemoteAction().then(action => {
-        _clearStatusMessage();
-        if (action.type === 'hex') {
-          _processHexClick({ col: action.data.col, row: action.data.row });
-        }
-      });
-    }
   }
 }
 
 function startTurn() {
   if (gs.phase === 'gameover') return;
+  _currentActingPlayer = null; // ターン切り替え時にクリア
   // 前のターンの instant イベントを終了済みに（次プレイヤーの番になったタイミング）
   // event31-34はユニット撃墜まで、event35はゼーコアクス消滅まで終了しないので除外
   const _THIRD_FORCE_EVENTS = new Set(['event31','event32','event33','event34','event35']);
@@ -7755,6 +7876,8 @@ function cpuPreRoll(cp, callback) {
 
 function beginNormalTurn(cp) {
   if (gs.phase === 'gameover') return;
+  // ターン開始時に_currentActingPlayerをクリア（前のターンの値が残るのを防止）
+  _currentActingPlayer = null;
   // Draw phase
   handleTurnDraw(cp);
   resetTurnBuffs();
@@ -7772,15 +7895,12 @@ function beginNormalTurn(cp) {
   }
 }
 
-/** リモート人間の操作をFirebaseから受信して処理する汎用関数 */
+/** リモート人間の操作をFirebaseから受信して処理する汎用関数（consume方式） */
 function _waitForRemoteAndProcess() {
   if (!OnlineSync.active) return;
-  OnlineSync.waitForRemoteAction().then(action => {
+  OnlineSync.consume().then(action => {
     _clearStatusMessage();
     if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
-      // ボタン操作 — 対応するactionを探して実行
-      // setButtonsで設定されたbtnsにアクセスできないので、
-      // リモート側でも同じUI関数を呼んでボタンを生成し、対応するものを実行
       _replayRemoteButton(action.data.index);
     } else if (action.type === 'hex') {
       _processHexClick({ col: action.data.col, row: action.data.row });
@@ -7815,7 +7935,7 @@ function showPreRollChoice(cp) {
   }
 
   updateAll();
-  setButtons(btns);
+  setButtons(btns, cp);
 }
 
 function humanRoll() {
@@ -7854,7 +7974,7 @@ function showDiceControlChoice(cp, callback) {
     btns.push({ text:`🎲 出目を ${i} にする`, cls:'btn-cyan', action:() => callback(i) });
   }
   updateAll();
-  setButtons(btns);
+  setButtons(btns, cp);
 }
 
 // === PHASE (2): After rolling action dice ===
@@ -7905,7 +8025,7 @@ function showActionChoice() {
   btns.push({ text:'パス（ターン終了）', cls:'btn-secondary', action:() => endTurn() });
 
   updateAll();
-  setButtons(btns);
+  setButtons(btns, cp);
 }
 
 // --- Melee phase: select target on map (like shoot) ---
@@ -7926,7 +8046,7 @@ function startMeleePhase(returnPhase) {
     
   }
   updateAll();
-  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelMelee() }]);
+  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelMelee() }], undefined, true);
   _startRemoteHexWait();
 }
 
@@ -8003,7 +8123,7 @@ function getPreDamageTotalText() {
 function preDamageRotation_Attacker() {
   gs.phase = 'pre_damage';
   const attacker = attackCtx.attacker;
-  if (attacker.isLocal && !attacker.destroyed) {
+  if ((attacker.isLocal || _isRemoteHuman(attacker)) && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     if (usable.length > 0) {
       const btns = [];
@@ -8020,10 +8140,9 @@ function preDamageRotation_Attacker() {
       }
       btns.push({ text:`パス（${getPreDamageTotalText()}）`, cls:'btn-secondary',
         action:() => preDamageRotation_Defender() });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, attacker); return;
     }
-  } else if (!attacker.isLocal && !attacker.destroyed) {
-    // CPU: ダメージアップのみ使用（タイミングA）
+  } else if (!attacker.isLocal && attacker.ai && !attacker.destroyed) {
     // 条件: 攻撃対象が存在し、かつ必要な場合のみ
     const dmgUpCard = attacker.hand.find(cid => CARD_DB[cid].name === 'ダメージアップ');
     if (dmgUpCard) {
@@ -8058,7 +8177,7 @@ function preDamageRotation_Defender() {
   const defender = attackCtx.target;
   // 回避成功済みなら防御フェーズをスキップ
   if (attackCtx.evadeSuccess) { preDamageRotation_ComboAllies(0); return; }
-  if (defender.isLocal && !defender.destroyed) {
+  if ((defender.isLocal || _isRemoteHuman(defender)) && !defender.destroyed) {
     const usableB = getUsableSkills(defender, ['B']);
     const usableF = getUsableSkills(defender, ['F']);
     if (usableB.length + usableF.length > 0) {
@@ -8085,10 +8204,9 @@ function preDamageRotation_Defender() {
       }
       btns.push({ text:`パス（${getPreDamageTotalText()}）`, cls:'btn-secondary',
         action:() => preDamageRotation_ComboAllies(0) });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, defender); return;
     }
-  } else if (!defender.isLocal && !defender.destroyed) {
-    // CPU: Type1は防御・回避を使わない。Type2-5は回避→防御の順で使用
+  } else if (!defender.isLocal && defender.ai && !defender.destroyed) {
     const aiType = defender.ai || 'type1';
     if (['type2','type3','type4','type5'].includes(aiType)) {
       const evadeCards = getUsableSkills(defender, ['B']).filter(cid => CARD_DB[cid].name === '回避');
@@ -8160,7 +8278,7 @@ function preDamageRotation_ComboAllies(startIdx) {
   const eligible = getComboEligibleAllies();
   for (let i = startIdx; i < eligible.length; i++) {
     const ally = eligible[i];
-    if (ally.isLocal) {
+    if (ally.isLocal || _isRemoteHuman(ally)) {
       const comboDmg = getShootDmg(ally.unit, gs.diceValue);
       const btns = [];
       btns.push({
@@ -8169,7 +8287,7 @@ function preDamageRotation_ComboAllies(startIdx) {
       });
       btns.push({ text:`パス（${getPreDamageTotalText()}）`, cls:'btn-secondary',
         action:() => preDamageRotation_ComboAllies(i + 1) });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, ally); return;
     } else {
       const comboDmg = getShootDmg(ally.unit, gs.diceValue);
       if (comboDmg > 0 && ally.hand.length > 0) {
@@ -8220,7 +8338,7 @@ function showComboDiscardSelect(ally, comboDmg, comboIdx) {
   }
   btns.push({ text:'やめる', cls:'btn-secondary',
     action:() => { gs.currentEventText = null; preDamageRotation_ComboAllies(comboIdx + 1); } });
-  updateAll(); setButtons(btns);
+  updateAll(); setButtons(btns, ally);
 }
 
 function executeCombo(ally, discardCardId, comboDmg) {
@@ -8308,7 +8426,7 @@ function preDamageRotation_AllPassed() {
   const btns = [];
 
   // Attacker can still use A/D/E/F skills even at this point
-  if (attacker.isLocal && !attacker.destroyed) {
+  if ((attacker.isLocal || _isRemoteHuman(attacker)) && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     for (const cardId of usable) {
       const card = CARD_DB[cardId];
@@ -8329,9 +8447,9 @@ function preDamageRotation_AllPassed() {
     cls:'btn-attack', action:() => resolveAttackDamage()
   });
 
-  if (attacker.isLocal) {
+  if (attacker.isLocal || _isRemoteHuman(attacker)) {
     updateAll();
-    setButtons(btns);
+    setButtons(btns, attacker);
   } else {
     // CPU auto-resolve
     resolveAttackDamage();
@@ -8460,7 +8578,7 @@ function postDamageRotation_Attacker() {
   gs.phase = 'post_damage';
   const attacker = gs._postDmgAttacker;
 
-  if (attacker.isLocal && !attacker.destroyed) {
+  if ((attacker.isLocal || _isRemoteHuman(attacker)) && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     if (usable.length > 0) {
       const btns = [];
@@ -8475,7 +8593,7 @@ function postDamageRotation_Attacker() {
       }
       btns.push({ text:'パス', cls:'btn-secondary',
         action:() => postDamageRotation_Defender() });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, attacker); return;
     }
   }
   postDamageRotation_Defender();
@@ -8499,7 +8617,7 @@ function postDamageRotation_Defender() {
     return;
   }
 
-  if (defender.isLocal) {
+  if (defender.isLocal || _isRemoteHuman(defender)) {
     const btns = [];
     for (const cardId of usableC) {
       const card = CARD_DB[cardId];
@@ -8519,7 +8637,7 @@ function postDamageRotation_Defender() {
     }
     btns.push({ text:'パス', cls:'btn-secondary',
       action:() => postDamageRotation_Others(0) });
-    updateAll(); setButtons(btns); return;
+    updateAll(); setButtons(btns, defender); return;
   } else {
     // CPU反撃: Type1/2は50%、Type3/4/5は100%。Type3/4は複数枚使用可
     const defAiType = defender.ai || 'type1';
@@ -8560,7 +8678,7 @@ function postDamageRotation_Others(startIdx) {
     const usable = getUsableSkills(p, ['F']);
     if (usable.length === 0) continue; // auto-pass
 
-    if (p.isLocal) {
+    if (p.isLocal || _isRemoteHuman(p)) {
       const btns = [];
       for (const cardId of usable) {
         const card = CARD_DB[cardId];
@@ -8574,7 +8692,7 @@ function postDamageRotation_Others(startIdx) {
       }
       btns.push({ text:'パス', cls:'btn-secondary',
         action:() => postDamageRotation_Others(i + 1) });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, p); return;
     }
     // CPU: Type1-5は耐久値回復があれば使う
     const pAiType = p.ai || 'type1';
@@ -8596,7 +8714,7 @@ function postDamageRotation_AllPassed() {
   gs.phase = 'post_damage';
   const attacker = gs._postDmgAttacker;
 
-  if (attacker.isLocal && !attacker.destroyed) {
+  if ((attacker.isLocal || _isRemoteHuman(attacker)) && !attacker.destroyed) {
     const usable = getUsableSkills(attacker, ['A','D','E','F']);
     const btns = [];
     for (const cardId of usable) {
@@ -8612,7 +8730,7 @@ function postDamageRotation_AllPassed() {
       gs._postDmgAttacker = null; gs._postDmgDefender = null;
       endTurn();
     }});
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, attacker);
     return;
   }
 
@@ -9022,7 +9140,7 @@ function applyDraw(player, cardId, rawDice, cappedDice, returnCallback) {
   showSkillOverlay(cardId, rawDice, effectText, 'skill-effect-success', () => {
     // Check hand limit — if over 4, must discard down
     if (player.hand.length > MAX_HAND_SIZE) {
-      if (player.isLocal) {
+      if (player.isLocal || _isRemoteHuman(player)) {
         showDiscardExcess(player, returnCallback);
       } else {
         // CPU: discard lowest value cards (unit cards first, then skill)
@@ -9062,7 +9180,7 @@ function showDiscardExcess(player, returnCallback) {
     });
   }
   updateAll();
-  setButtons(btns);
+  setButtons(btns, player);
 }
 
 function cpuDiscardExcess(player) {
@@ -9233,7 +9351,7 @@ function applyRecycle(player, cardId, rawDice, cappedDice, returnCallback) {
       return;
     }
     
-    if (player.isLocal) {
+    if (player.isLocal || _isRemoteHuman(player)) {
       showRecycleSelect(player, actualCount, returnCallback);
     } else {
       cpuRecycleSelect(player, actualCount);
@@ -9289,7 +9407,7 @@ function showRecycleSelect(player, remaining, returnCallback) {
     }
   }});
   updateAll();
-  setButtons(btns);
+  setButtons(btns, player);
 }
 
 function cpuRecycleSelect(player, count) {
@@ -9394,7 +9512,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
       if (usedAtPreRoll) {
         gs.phase = 'pre_roll';
         updateAll();
-        if (player.isLocal) {
+        if (player.isLocal || _isRemoteHuman(player)) {
           showPreRollChoice(player);
         } else {
           setTimeout(() => cpuPreRoll(player, () => cpuTurn(player)), 300);
@@ -9410,7 +9528,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
     const swappable = getSwappableCards(player);
     if (swappable.length === 0) { next(); return; }
 
-    if (!player.isLocal) { next(); return; }
+    if (!player.isLocal && !!player.ai) { next(); return; }
 
     gs.phase = 'evac_swap';
     
@@ -9438,12 +9556,12 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
     }
     btns.push({ text: '乗り換えない', cls: 'btn-secondary', action: () => { setButtons([]); next(); } });
     updateAll();
-    setButtons(btns);
+    setButtons(btns, player);
   }
 
   showSkillOverlay(cardId, diceValue, effectText, 'skill-effect-success', () => {
     if (gs.phase === 'gameover') return;
-    if (player.isLocal) {
+    if (player.isLocal || _isRemoteHuman(player)) {
       showEvacHexSelect(player, available, afterEvac);
     } else {
       const sp = available[Math.floor(seededRandom() * available.length)];
@@ -9459,6 +9577,7 @@ function applyEmergencyEvac(player, cardId, diceValue, returnCallback) {
 function showEvacHexSelect(player, available, returnCallback) {
   gs.phase = 'evac_select';
   gs.spawnChoices = available.map(([c,r]) => ({ col:c, row:r }));
+  _currentActingPlayer = player;
   
   updateAll();
   setButtons([]);
@@ -9477,6 +9596,9 @@ function showEvacHexSelect(player, available, returnCallback) {
     updateAll();
     if (returnCallback) returnCallback();
   };
+
+  // リモート人間のヘックスクリック待ち
+  _startRemoteHexWait();
 }
 
 function startMovePhase() {
@@ -9486,7 +9608,7 @@ function startMovePhase() {
     .filter(h => h.col !== cp.unit.col || h.row !== cp.unit.row); // exclude 0-move
   gs.phase = 'move';
   updateAll();
-  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }]);
+  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }], undefined, true);
   _startRemoteHexWait();
 }
 
@@ -9515,7 +9637,7 @@ function startShootPhase() {
     
   }
   gs.phase = 'shoot'; updateAll();
-  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }]);
+  setButtons([{ text:'戻る', cls:'btn-secondary', action:() => cancelAction() }], undefined, true);
   _startRemoteHexWait();
 }
 
@@ -9556,7 +9678,7 @@ function postMoveRotation_TurnPlayer() {
   // Check base at current position (may change after evac)
   const onBase = cp.unit && gs.grid[cp.unit.col][cp.unit.row] === CELL_TYPES.BASE;
 
-  if (!cp.isLocal) {
+  if (!cp.isLocal && !!cp.ai) {
     // CPU handled in cpuTurn, shouldn't reach here normally
     endTurn();
     return;
@@ -9593,6 +9715,7 @@ function postMoveRotation_TurnPlayer() {
           gs.phase = 'shoot';
           updateAll();
           setButtons([]);
+          _startRemoteHexWait();
         }
       });
     }
@@ -9641,7 +9764,7 @@ function postMoveRotation_TurnPlayer() {
     action:() => postMoveRotation_Others(0) });
 
   updateAll();
-  setButtons(btns);
+  setButtons(btns, cp);
 }
 
 function postMoveRotation_Others(startIdx) {
@@ -9661,7 +9784,7 @@ function postMoveRotation_Others(startIdx) {
     const usable = getUsableSkills(p, ['F']);
     if (usable.length === 0) continue; // auto-pass
 
-    if (p.isLocal) {
+    if (p.isLocal || _isRemoteHuman(p)) {
       const btns = [];
       for (const cardId of usable) {
         const card = CARD_DB[cardId];
@@ -9675,7 +9798,7 @@ function postMoveRotation_Others(startIdx) {
       }
       btns.push({ text:'パス', cls:'btn-secondary',
         action:() => postMoveRotation_Others(i + 1) });
-      updateAll(); setButtons(btns); return;
+      updateAll(); setButtons(btns, p); return;
     }
     // CPU: Type1-5は耐久値回復があれば使う
     const pAiType2 = p.ai || 'type1';
@@ -9696,7 +9819,7 @@ function postMoveRotation_AllPassed() {
   gs.phase = 'post_move';
   const cp = getCurrentPlayer();
 
-  if (cp.isLocal && !cp.destroyed) {
+  if ((cp.isLocal || _isRemoteHuman(cp)) && !cp.destroyed) {
     const adj = getNeighbors(cp.unit.col, cp.unit.row)
       .map(n => getUnitAt(n.col, n.row))
       .filter(e => e && e.team !== cp.team);
@@ -9772,7 +9895,7 @@ function postMoveRotation_AllPassed() {
     btns.push({ text:'ターン終了', cls:'btn-secondary', action:() => {
       gs._postMoveOnBase = false; gs.meleeTargets = null; endTurn();
     }});
-    updateAll(); setButtons(btns);
+    updateAll(); setButtons(btns, cp);
     return;
   }
 
@@ -9815,7 +9938,7 @@ function executeSupply(player) {
     if (gs.phase === 'gameover') return;
     // Check hand limit — if over, must discard down
     if (player.hand.length > MAX_HAND_SIZE) {
-      if (player.isLocal) {
+      if (player.isLocal || _isRemoteHuman(player)) {
         showDiscardExcess(player, () => { updateAll(); endTurn(); });
       } else {
         cpuDiscardExcess(player);
@@ -9843,7 +9966,7 @@ function showSwapSelect(player, swappableCardIds) {
     postMoveRotation_TurnPlayer();
   }});
   updateAll();
-  setButtons(btns);
+  setButtons(btns, player);
 }
 
 function executeSwap(player, cardId) {
@@ -9950,11 +10073,22 @@ function handleRespawn(player) {
   const avail = spawns.filter(([c,r]) => !getUnitAt(c,r));
   if (avail.length === 0) { addLog(`${player.name} は再出撃できるマスがない。（ターン終了）`, 'system'); endTurn(); return; }
 
-  if (player.isLocal) {
+  if (player.isLocal || _isRemoteHuman(player)) {
+    // ローカル人間 or リモート人間 → ヘックス選択UI
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
     gs.respawningPlayer = player;
     updateAll();
     setButtons([]);
+    // リモート人間の場合はFirebase経由のヘックス操作を待つ
+    if (_isRemoteHuman(player) && OnlineSync.active) {
+      _setStatusMessage('相手の操作を待っています...');
+      OnlineSync.consume().then(action => {
+        _clearStatusMessage();
+        if (action.type === 'hex') {
+          _processHexClick({ col: action.data.col, row: action.data.row });
+        }
+      });
+    }
   } else if (player.ai) {
     // CPU: pick spawn hex, then choose best unit
     const sp = avail[Math.floor(seededRandom()*avail.length)];
@@ -9973,21 +10107,6 @@ function handleRespawn(player) {
     addSpawnPopup(sp[0], sp[1], true);
     updateAll();
     setTimeout(() => beginNormalTurn(player), 300);
-  } else {
-    // リモート人間 → ヘックス選択＋ユニット選択を待つ
-    gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
-    gs.respawningPlayer = player;
-    updateAll();
-    setButtons([]);
-    if (OnlineSync.active) {
-      _setStatusMessage('相手の操作を待っています...');
-      OnlineSync.waitForRemoteAction().then(action => {
-        _clearStatusMessage();
-        if (action.type === 'hex') {
-          _processHexClick({ col: action.data.col, row: action.data.row });
-        }
-      });
-    }
   }
 }
 
@@ -10044,7 +10163,7 @@ function showRespawnUnitSelect(player) {
   }
 
   updateAll();
-  setButtons(btns);
+  setButtons(btns, player);
 }
 
 function executeRespawnWithUnit(player, unitId, cardId) {
@@ -10074,7 +10193,7 @@ function executeRespawnWithUnit(player, unitId, cardId) {
 // 将来のオンライン対戦ではリモート人間（isLocal=false, ai=null）は
 // CPUではなく相手の操作を待つ処理に分岐する
 function isCpuActing(player) {
-  return !player.isLocal && getCurrentPlayer() === player;
+  return !player.isLocal && !!player.ai && getCurrentPlayer() === player;
 }
 
 function endTurn() {
@@ -10943,10 +11062,12 @@ function _processHexClick(hex) {
   }
 
   const cp = getCurrentPlayer();
+  // ローカル人間 or リモート人間（consume経由）の操作を許可
+  const canAct = cp && (cp.isLocal || _isRemoteHuman(cp));
   if (gs.phase === 'move') {
-    if (cp && cp.isLocal && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) executeMove(hex.col, hex.row);
+    if (canAct && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) executeMove(hex.col, hex.row);
   } else if (gs.phase === 'shoot') {
-    if (cp && cp.isLocal) {
+    if (canAct) {
       const t = gs.shootTargets.find(t => t.col === hex.col && t.row === hex.row);
       if (t) {
         gs.shootRangeHexes = [];
@@ -10955,7 +11076,7 @@ function _processHexClick(hex) {
       }
     }
   } else if (gs.phase === 'melee') {
-    if (cp && cp.isLocal && gs.meleeTargets) {
+    if (canAct && gs.meleeTargets) {
       const t = gs.meleeTargets.find(e => e.unit.col === hex.col && e.unit.row === hex.row);
       if (t) executeMeleeFromMap(t);
     }
