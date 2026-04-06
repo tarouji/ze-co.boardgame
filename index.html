@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.3</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.4</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2094,7 +2094,8 @@ const OnlineLobby = (() => {
     gameConfig._isOnline = true;
 
     // BGM
-    if (data.bgm) _bgm.play(2); else _bgm.stop();
+    ssBGMEnabled = !!data.bgm;
+    if (ssBGMEnabled) _bgm.play(2); else _bgm.stop();
 
     // シードを設定してゲーム開始
     gs._onlineSeed = data.seed;
