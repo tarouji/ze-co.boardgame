@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.1</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.3</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -5132,7 +5132,7 @@ function _setupOverlayClose(overlay, closeHandler, hintEl) {
 
   function _updateHint() {
     if (hintEl) {
-      hintEl.textContent = `クリックで続行（${confirmedCount}/${humanCount}）`;
+      hintEl.textContent = `クリックで続行（残り${humanCount - confirmedCount}人）`;
     }
   }
 
@@ -5670,28 +5670,31 @@ function setButtons(btns, actingPlayer, skipRemoteWait) {
   const actingP = _currentActingPlayer || (typeof getCurrentPlayer === 'function' ? getCurrentPlayer() : null);
   const isRemoteHumanAction = OnlineSync.active && btns.length > 0 && actingP && !actingP.isLocal && !actingP.ai;
 
-  for (let i = 0; i < btns.length; i++) {
-    const b = btns[i];
-    const idx = i;
-    const e = document.createElement('button');
-    e.className = `btn ${b.cls||'btn-primary'}`;
-    e.textContent = b.text;
-    e.disabled = !!b.disabled || isRemoteHumanAction;
-    e.onclick = () => {
-      if (OnlineSync.active && !isRemoteHumanAction) {
-        // ローカル操作をFirebaseに送信
-        OnlineSync.sendAction('button', { index: idx });
-      }
-      b.action();
-    };
-    c.appendChild(e);
+  // リモート人間の操作待ちの場合、ボタンは表示しない（手札情報等の漏洩防止）
+  if (!isRemoteHumanAction) {
+    for (let i = 0; i < btns.length; i++) {
+      const b = btns[i];
+      const idx = i;
+      const e = document.createElement('button');
+      e.className = `btn ${b.cls||'btn-primary'}`;
+      e.textContent = b.text;
+      e.disabled = !!b.disabled;
+      e.onclick = () => {
+        if (OnlineSync.active) {
+          // ローカル操作をFirebaseに送信
+          OnlineSync.sendAction('button', { index: idx });
+        }
+        b.action();
+      };
+      c.appendChild(e);
+    }
   }
-  if (isMobile()) msSetButtons(btns);
+  if (isMobile()) msSetButtons(isRemoteHumanAction ? [] : btns);
 
   // リモート人間の操作を待って自動実行（consume方式）
   // skipRemoteWait=true の場合は呼び出し元が_startRemoteHexWait等で処理するため、ここではconsumeしない
   if (isRemoteHumanAction && !skipRemoteWait) {
-    _setStatusMessage(`${actingP.name} の操作を待っています...`);
+    _setStatusMessage('他プレイヤーの操作を待っています...');
     _waitForRemoteInput(btns);
   }
 }
@@ -5759,7 +5762,7 @@ function _isRemoteHuman(player) {
  */
 function _startRemoteHexWait() {
   if (!OnlineSync.active || !_isRemoteHumanActing()) return;
-  _setStatusMessage('相手の操作を待っています...');
+  _setStatusMessage('他プレイヤーの操作を待っています...');
   OnlineSync.consume().then(action => {
     _clearStatusMessage();
     if (action.type === 'hex') {
@@ -7220,7 +7223,7 @@ function eventMoveself(player, callback) {
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(player) && OnlineSync.active) {
       _currentActingPlayer = player;
-      _setStatusMessage('相手の操作を待っています...');
+      _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
         if (action.type === 'hex') {
@@ -7314,7 +7317,7 @@ function eventMoveselfInternal(target, controller, callback, backFn) {
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(controller) && OnlineSync.active) {
       _currentActingPlayer = controller;
-      _setStatusMessage('相手の操作を待っています...');
+      _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
         if (action.type === 'hex') {
@@ -7635,7 +7638,7 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(p) && OnlineSync.active) {
       _currentActingPlayer = p;
-      _setStatusMessage('相手の操作を待っています...');
+      _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
         if (action.type === 'hex') {
@@ -7873,7 +7876,7 @@ function processSetupQueue() {
     setButtons([]);
     // リモート人間の場合はFirebase経由のヘックス操作を待つ
     if (_isRemoteHuman(player) && OnlineSync.active) {
-      _setStatusMessage('相手の操作を待っています...');
+      _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
         if (action.type === 'hex') {
@@ -7899,6 +7902,7 @@ function processSetupQueue() {
 function startTurn() {
   if (gs.phase === 'gameover') return;
   _currentActingPlayer = null; // ターン切り替え時にクリア
+  if (gameConfig._isOnline) _clearStatusMessage(); // 前のターンのメッセージをクリア
   // 前のターンの instant イベントを終了済みに（次プレイヤーの番になったタイミング）
   // event31-34はユニット撃墜まで、event35はゼーコアクス消滅まで終了しないので除外
   const _THIRD_FORCE_EVENTS = new Set(['event31','event32','event33','event34','event35']);
@@ -8000,6 +8004,7 @@ function beginNormalTurn(cp) {
     showPreRollChoice(cp);
   } else if (cp.ai) {
     // CPU → 自動処理
+    if (gameConfig._isOnline) _setStatusMessage('他プレイヤーの操作を待っています...');
     setTimeout(() => cpuPreRoll(cp, () => cpuTurn(cp)), 500);
   } else {
     // リモート人間 → 同じUIを表示（操作はFirebase経由で受信）
@@ -10198,7 +10203,7 @@ function handleRespawn(player) {
     setButtons([]);
     // リモート人間の場合はFirebase経由のヘックス操作を待つ
     if (_isRemoteHuman(player) && OnlineSync.active) {
-      _setStatusMessage('相手の操作を待っています...');
+      _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
         if (action.type === 'hex') {
