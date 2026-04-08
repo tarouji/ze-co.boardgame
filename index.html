@@ -1367,10 +1367,10 @@
         </div>
       </div>
       <div id="ms-footer">
-        <button class="ms-footer-btn" onclick="msBackToModeSelect()">モード選択に戻る</button>
         <button class="ms-footer-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
         <button class="ms-footer-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
         <button class="ms-footer-btn ms-start-btn" onclick="msStartGame()">ゲーム開始</button>
+        <button class="ms-footer-btn" onclick="msBackToModeSelect()">モード選択に戻る</button>
       </div>
     </div>
   </div>
@@ -1445,7 +1445,6 @@
         <button class="ss-info-btn" onclick="openInfoModal('rule-modal')">ルール説明</button>
         <button class="ss-info-btn" onclick="openInfoModal('card-modal-info')">カード一覧</button>
       </div>
-      <button class="lobby-back-btn" style="margin-bottom:16px;" onclick="ssBackToModeSelect()">ゲームモードの選択に戻る</button>
       <div class="ss-section">
         <div class="ss-label">所属選択</div>
         <div class="ss-team-select">
@@ -1518,6 +1517,7 @@
       </div>
       <div class="ss-start-area">
         <button class="ss-start-btn" onclick="ssStartGame()">ゲーム開始</button>
+        <button class="lobby-back-btn" style="margin-top:16px;" onclick="ssBackToModeSelect()">ゲームモードの選択に戻る</button>
       </div>
     </div>
   </div>
@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.7.4</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.1</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2060,8 +2060,14 @@ const OnlineLobby = (() => {
     _listeners.push(() => startRef.off('value', onStart));
   }
 
-  /** ゲーム開始処理 */
+  /** ゲーム開始処理（二重呼び出し防止つき） */
+  let _gameStarted = false;
   function _onGameStart(data) {
+    if (_gameStarted) {
+      console.log('[Lobby] _onGameStart already called, ignoring duplicate');
+      return;
+    }
+    _gameStarted = true;
     console.log('[Lobby] Game starting with seed:', data.seed);
 
     // ロビーを閉じる
@@ -2346,9 +2352,10 @@ const OnlineSync = (() => {
   // === バッファベースの受信キュー ===
   // 受信したアクションをバッファに溜め、consume()で順番に取り出す。
   // これにより、受信タイミングと消費タイミングのずれを完全に吸収する。
-  const _actionBuffer = [];  // 受信バッファ
+  const _actionBuffer = [];  // 受信バッファ（通常のbutton/hexアクション用）
   let _waitResolve = null;   // consume()待ちのresolver（1つだけ）
   let _lastProcessedSeq = {}; // from別の最終処理済みseq（重複防止）
+  let _overlayClickCallback = null; // overlay_click受信時のコールバック
 
   /** 操作同期を開始（ゲーム開始時に呼ぶ） */
   function start(roomCode) {
@@ -2388,6 +2395,14 @@ const OnlineSync = (() => {
 
       console.log('[OnlineSync] Received action:', action.type, action.data, 'seq:', action.seq);
 
+      // overlay_clickは専用コールバックに振り分け（通常バッファに入れない）
+      if (action.type === 'overlay_click') {
+        if (_overlayClickCallback) {
+          _overlayClickCallback(action);
+        }
+        return;
+      }
+
       if (_waitResolve) {
         const r = _waitResolve;
         _waitResolve = null;
@@ -2411,6 +2426,10 @@ const OnlineSync = (() => {
         if (_lastProcessedSeq[fromId] && action.seq <= _lastProcessedSeq[fromId]) continue;
         _lastProcessedSeq[fromId] = action.seq;
         console.log('[OnlineSync] Received action (from queue):', action.type, action.data, 'seq:', action.seq);
+        if (action.type === 'overlay_click') {
+          if (_overlayClickCallback) _overlayClickCallback(action);
+          continue;
+        }
         if (_waitResolve) {
           const r = _waitResolve;
           _waitResolve = null;
@@ -2432,9 +2451,10 @@ const OnlineSync = (() => {
     _active = false;
     _actionBuffer.length = 0;
     if (_waitResolve) {
-      _waitResolve = null; // 待機中のPromiseは放棄
+      _waitResolve = null;
     }
     _lastProcessedSeq = {};
+    _overlayClickCallback = null;
   }
 
   /** ローカル操作をFirebaseに送信 */
@@ -2455,11 +2475,7 @@ const OnlineSync = (() => {
   /**
    * リモート操作を1つ消費する（Promiseを返す）
    * バッファにデータがあれば即解決、なければデータが来るまで待つ。
-   * 
-   * 旧waitForRemoteAction()の代替。キュー方式により:
-   * - 受信タイミングと消費タイミングのずれを吸収
-   * - 複数のwait呼び出しの上書き問題を解消
-   * - ボタン待ちとヘックス待ちの混在を正しく処理
+   * overlay_clickはここには流れない（専用コールバックで処理される）。
    */
   function consume() {
     if (_actionBuffer.length > 0) {
@@ -2478,12 +2494,18 @@ const OnlineSync = (() => {
     console.log('[OnlineSync] Buffer cleared');
   }
 
+  /** overlay_click受信時のコールバックを設定 */
+  function setOverlayClickCallback(cb) {
+    _overlayClickCallback = cb;
+  }
+
   return {
     start,
     stop,
     sendAction,
     consume,
     clearBuffer,
+    setOverlayClickCallback,
     get active() { return _active; },
     get bufferSize() { return _actionBuffer.length; },
   };
@@ -5063,9 +5085,9 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
   // 0.2秒後に演出表示＆クリックハンドラ登録
   setTimeout(() => {
     overlay.classList.add('active');
-    const handler = () => {
+    const hintEl = overlay.querySelector('.skill-click-hint');
+    const closeHandler = () => {
       overlay.classList.remove('active');
-      overlay.removeEventListener('click', handler);
       // オーバーレイを閉じた時点でskill音タイマーが残っていればキャンセル
       if (skillSoundTimer !== null) {
         clearTimeout(skillSoundTimer);
@@ -5079,14 +5101,84 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
         if (callback) callback();
       }
     };
-    overlay.addEventListener('click', handler);
-    // オンライン対戦時: 1.5秒後に自動で閉じる（同期ズレ防止）
-    if (gameConfig._isOnline) {
-      setTimeout(() => {
-        if (overlay.classList.contains('active')) handler();
-      }, 1500);
-    }
+    _setupOverlayClose(overlay, closeHandler, hintEl);
   }, 200);
+}
+
+/**
+ * オンライン対戦用: オーバーレイの全員確認待ち
+ * 全人間プレイヤーがクリックするまでオーバーレイを閉じない。
+ * 1人用ではクリックで即閉じ。
+ *
+ * @param {HTMLElement} overlay - オーバーレイ要素
+ * @param {Function} closeHandler - オーバーレイを閉じてcallbackを呼ぶ関数（1回だけ呼ばれる）
+ * @param {HTMLElement} [hintEl] - 「N人中M人がクリック済み」を表示するヒント要素
+ */
+function _setupOverlayClose(overlay, closeHandler, hintEl) {
+  if (!gameConfig._isOnline) {
+    // 1人用: クリックで即閉じ
+    const handler = () => {
+      overlay.removeEventListener('click', handler);
+      closeHandler();
+    };
+    overlay.addEventListener('click', handler);
+    return;
+  }
+
+  // オンライン: 全人間プレイヤーがクリックするまで待つ
+  const humanCount = gs.players.filter(p => !p.ai).length;
+  let confirmedCount = 0;
+  let closed = false;
+
+  function _updateHint() {
+    if (hintEl) {
+      hintEl.textContent = `クリックで続行（${confirmedCount}/${humanCount}）`;
+    }
+  }
+
+  function _tryClose() {
+    if (closed) return;
+    if (confirmedCount >= humanCount) {
+      closed = true;
+      overlay.removeEventListener('click', localClickHandler);
+      // コールバックを解除
+      OnlineSync.setOverlayClickCallback(null);
+      closeHandler();
+    }
+  }
+
+  // リモート人間のoverlay_click受信コールバック（消費ではなくコールバック方式）
+  OnlineSync.setOverlayClickCallback((action) => {
+    if (closed) return;
+    confirmedCount++;
+    _updateHint();
+    _tryClose();
+  });
+
+  // ローカルプレイヤーのクリック
+  const localClickHandler = () => {
+    if (closed) return;
+    // 自分のクリックは1回だけカウント
+    overlay.removeEventListener('click', localClickHandler);
+    confirmedCount++;
+    OnlineSync.sendAction('overlay_click', {});
+    _updateHint();
+    _tryClose();
+  };
+
+  overlay.addEventListener('click', localClickHandler);
+  _updateHint();
+
+  // 安全策: 15秒後にまだ閉じていなければ強制クローズ（回線切断対策）
+  setTimeout(() => {
+    if (!closed) {
+      console.warn('[OverlaySync] Force closing overlay after timeout');
+      closed = true;
+      overlay.removeEventListener('click', localClickHandler);
+      OnlineSync.setOverlayClickCallback(null);
+      closeHandler();
+    }
+  }, 15000);
 }
 
 // Determine which skill types a card belongs to
@@ -6177,6 +6269,7 @@ function startGame(rematch) {
   gs._postDmgAttacker = null;
   gs._postDmgDefender = null;
   gs._cpuUsedCounter = false;
+  gs._fSkillRotationDone = false; // endTurn前のFスキル回転済みフラグ
   gs._card13Exiled = false; // e04出現中はcard13を退避（デッキ・捨て札から除外）
   gs._evacCallback = null;
   gs.currentEventId = null; gs.currentEventText = null;
@@ -6264,9 +6357,8 @@ function showMissionAchievement(missionId, team, callback) {
   effectEl.style.border = team === 'a' ? '1px solid rgba(74,158,255,0.4)' : '1px solid rgba(255,74,74,0.4)';
   if (hintEl) hintEl.textContent = 'クリックで続行';
   overlay.classList.add('active');
-  const handler = () => {
+  const closeHandler = () => {
     overlay.classList.remove('active');
-    overlay.removeEventListener('click', handler);
     diceEl.style.fontSize = '';
     diceEl.style.color = '';
     diceEl.style.textShadow = '';
@@ -6278,7 +6370,7 @@ function showMissionAchievement(missionId, team, callback) {
     if (diceLabel) diceLabel.style.display = '';
     if (callback) callback();
   };
-  overlay.addEventListener('click', handler);
+  _setupOverlayClose(overlay, closeHandler, hintEl);
 }
 
 // Award mission points and show achievement
@@ -6750,8 +6842,7 @@ function showEventOverlay(eventId, callback, player) {
   if (hintEl) hintEl.textContent = 'クリックで続行';
   overlay.classList.add('active');
 
-  const handler = () => {
-    overlay.removeEventListener('click', handler);
+  const closeHandler = () => {
     overlay.classList.remove('active');
     img.style.objectFit = '';
     img.parentElement.classList.remove('event-large');
@@ -6760,7 +6851,7 @@ function showEventOverlay(eventId, callback, player) {
     if (diceLabel) { diceLabel.style.display = ''; diceLabel.textContent = 'スキルサイコロ'; }
     if (callback) callback();
   };
-  overlay.addEventListener('click', handler);
+  _setupOverlayClose(overlay, closeHandler, hintEl);
 }
 
 function updateEventPanel() {
@@ -8431,12 +8522,11 @@ function showComboOverlay(ally, comboDmg, callback) {
   }
 
   // Human/CPU ともにクリックで続行
-  const handler = () => {
-    overlay.removeEventListener('click', handler);
+  const closeHandler = () => {
     cleanup();
     if (callback) callback();
   };
-  overlay.addEventListener('click', handler);
+  _setupOverlayClose(overlay, closeHandler, hintEl);
 }
 
 // ========== ALL PASSED → Return to attacker for final confirm ==========
@@ -8749,6 +8839,7 @@ function postDamageRotation_AllPassed() {
     }
     btns.push({ text:'ターン終了', cls:'btn-secondary', action:() => {
       gs._postDmgAttacker = null; gs._postDmgDefender = null;
+      gs._fSkillRotationDone = true;
       endTurn();
     }});
     updateAll(); setButtons(btns, attacker);
@@ -8756,6 +8847,7 @@ function postDamageRotation_AllPassed() {
   }
 
   gs._postDmgAttacker = null; gs._postDmgDefender = null;
+  gs._fSkillRotationDone = true;
   endTurn();
 }
 
@@ -8842,6 +8934,7 @@ function execCounterAttack(defender, attacker, cardId) {
           if (gs.phase === 'gameover') return;
           if (attacker.destroyed) {
             gs._postDmgAttacker = null; gs._postDmgDefender = null;
+            gs._fSkillRotationDone = true;
             endTurn();
             return;
           }
@@ -9914,13 +10007,16 @@ function postMoveRotation_AllPassed() {
     }
 
     btns.push({ text:'ターン終了', cls:'btn-secondary', action:() => {
-      gs._postMoveOnBase = false; gs.meleeTargets = null; endTurn();
+      gs._postMoveOnBase = false; gs.meleeTargets = null;
+      gs._fSkillRotationDone = true;
+      endTurn();
     }});
     updateAll(); setButtons(btns, cp);
     return;
   }
 
   gs._postMoveOnBase = false; gs.meleeTargets = null;
+  gs._fSkillRotationDone = true;
   endTurn();
 }
 
@@ -10220,6 +10316,73 @@ function isCpuActing(player) {
 function endTurn() {
   if (gs.phase === 'gameover') return;
 
+  // postMoveRotation / postDamageRotation 経由の場合は既にFスキル回転済み
+  // それ以外の場合（パスやCPU直接終了）は、他プレイヤーにFスキル使用機会を与える
+  if (gs._fSkillRotationDone) {
+    gs._fSkillRotationDone = false;
+    _endTurnCore();
+  } else {
+    _endTurnFSkillRotation(0, () => {
+      _endTurnCore();
+    });
+  }
+}
+
+/**
+ * ターン終了前の他プレイヤーFスキル回転
+ * postMoveRotation_Others / postDamageRotation_Others と同等のロジック。
+ * ターンプレイヤー以外で、Fスキル（耐久値回復）を持つプレイヤーに使用機会を与える。
+ */
+function _endTurnFSkillRotation(startIdx, callback) {
+  const cp = getCurrentPlayer();
+  const others = [];
+  for (const ti of gs.turnOrder) {
+    const p = gs.players[ti];
+    if (p === cp || p.destroyed || !p.unit) continue;
+    others.push(p);
+  }
+
+  for (let i = startIdx; i < others.length; i++) {
+    const p = others[i];
+    const usable = getUsableSkills(p, ['F']);
+    if (usable.length === 0) continue; // auto-pass
+
+    if (p.isLocal || _isRemoteHuman(p)) {
+      gs.phase = 'end_turn_fskill';
+      const btns = [];
+      for (const cardId of usable) {
+        const card = CARD_DB[cardId];
+        const capturedI = i;
+        btns.push({
+          text:`🃏 ${card.name}（${getCardTypeLabel(cardId)}）を使用`,
+          cls:'btn-skill', action:() => useSkillCard(p, cardId, () => {
+            _endTurnFSkillRotation(capturedI, callback); // 同じプレイヤーから再チェック
+          })
+        });
+      }
+      btns.push({ text:'パス', cls:'btn-secondary',
+        action:() => _endTurnFSkillRotation(i + 1, callback) });
+      updateAll(); setButtons(btns, p); return;
+    }
+    // CPU: 耐久値回復があれば使う
+    const pAiType = p.ai || 'type1';
+    if (['type1','type2','type3','type4','type5'].includes(pAiType) && usable.length > 0) {
+      const isMaxHp = p.unit.hp >= p.unit.maxHp;
+      if (!isMaxHp && seededRandom() < cpuSkillProb(pAiType)) {
+        useSkillCard(p, usable[0], () => _endTurnFSkillRotation(i + 1, callback));
+        return;
+      }
+    }
+  }
+
+  // 全員パス → callback（endTurn本体へ）
+  if (callback) callback();
+}
+
+/** endTurnの本体（イベント発火・ミッション・ターン進行） */
+function _endTurnCore() {
+  if (gs.phase === 'gameover') return;
+
   const cp = getCurrentPlayer();
 
   // Event trigger: if player moved onto EVENT hex this turn and is alive
@@ -10266,6 +10429,7 @@ function finishEndTurn() {
   gs._evacCallback = null; gs.meleeReturnPhase = null; gs._postMoveOnBase = false; gs.currentEventText = null;
   gs._postDmgAttacker = null; gs._postDmgDefender = null;
   gs._cpuUsedCounter = false;
+  gs._fSkillRotationDone = false;
   gs._landedOnEvent = false; gs._eventMoveCallback = null;
 
   // Extra turn (event35): same player goes again, no turnCount increment
