@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.3</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.4</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -5082,27 +5082,86 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
   effectEl.className = 'skill-effect-text ' + (effectClass || 'skill-effect-info');
   if (userNameEl) userNameEl.textContent = skillUser ? skillUser.name : '';
 
-  // 0.2秒後に演出表示＆クリックハンドラ登録
-  setTimeout(() => {
-    overlay.classList.add('active');
-    const hintEl = overlay.querySelector('.skill-click-hint');
-    const closeHandler = () => {
-      overlay.classList.remove('active');
-      // オーバーレイを閉じた時点でskill音タイマーが残っていればキャンセル
-      if (skillSoundTimer !== null) {
-        clearTimeout(skillSoundTimer);
-        skillSoundTimer = null;
-      }
-      if (failPlayer) {
-        checkMissions('skillFail', { player: failPlayer }, () => {
-          if (callback) callback();
-        });
-      } else {
+  // オンライン対戦: 200ms前にoverlay_clickが届く可能性があるため、
+  // コールバック登録を先に行い、表示とクリックハンドラは200ms後に登録
+  const hintEl = overlay.querySelector('.skill-click-hint');
+  const closeHandler = () => {
+    overlay.classList.remove('active');
+    if (skillSoundTimer !== null) {
+      clearTimeout(skillSoundTimer);
+      skillSoundTimer = null;
+    }
+    if (failPlayer) {
+      checkMissions('skillFail', { player: failPlayer }, () => {
         if (callback) callback();
+      });
+    } else {
+      if (callback) callback();
+    }
+  };
+
+  if (gameConfig._isOnline) {
+    // オンライン: Firebaseコールバックを先にセットアップ
+    const humanCount = gs.players.filter(p => !p.ai).length;
+    let confirmedCount = 0;
+    let closed = false;
+
+    function _updateHint() {
+      if (hintEl) hintEl.textContent = `クリックで続行（残り${humanCount - confirmedCount}人）`;
+    }
+    function _tryClose() {
+      if (closed) return;
+      if (confirmedCount >= humanCount) {
+        closed = true;
+        overlay.removeEventListener('click', _localClick);
+        OnlineSync.setOverlayClickCallback(null);
+        closeHandler();
       }
+    }
+
+    // リモートのoverlay_click受信コールバックを即座に登録
+    OnlineSync.setOverlayClickCallback(() => {
+      if (closed) return;
+      confirmedCount++;
+      _updateHint();
+      _tryClose();
+    });
+
+    const _localClick = () => {
+      if (closed) return;
+      overlay.removeEventListener('click', _localClick);
+      confirmedCount++;
+      OnlineSync.sendAction('overlay_click', {});
+      _updateHint();
+      _tryClose();
     };
-    _setupOverlayClose(overlay, closeHandler, hintEl);
-  }, 200);
+
+    setTimeout(() => {
+      overlay.classList.add('active');
+      overlay.addEventListener('click', _localClick);
+      _updateHint();
+    }, 200);
+
+    // 安全策: 15秒タイムアウト
+    setTimeout(() => {
+      if (!closed) {
+        closed = true;
+        overlay.removeEventListener('click', _localClick);
+        OnlineSync.setOverlayClickCallback(null);
+        closeHandler();
+      }
+    }, 15000);
+  } else {
+    // 1人用: 200ms後に表示、クリックで即閉じ
+    setTimeout(() => {
+      overlay.classList.add('active');
+      const handler = () => {
+        overlay.removeEventListener('click', handler);
+        closeHandler();
+      };
+      overlay.addEventListener('click', handler);
+    }, 200);
+  }
 }
 
 /**
@@ -5141,13 +5200,13 @@ function _setupOverlayClose(overlay, closeHandler, hintEl) {
     if (confirmedCount >= humanCount) {
       closed = true;
       overlay.removeEventListener('click', localClickHandler);
-      // コールバックを解除
       OnlineSync.setOverlayClickCallback(null);
       closeHandler();
     }
   }
 
-  // リモート人間のoverlay_click受信コールバック（消費ではなくコールバック方式）
+  // リモート人間のoverlay_click受信コールバック
+  // ※ 先に登録してから overlay を active にすることで、タイミングずれでの取りこぼしを防ぐ
   OnlineSync.setOverlayClickCallback((action) => {
     if (closed) return;
     confirmedCount++;
@@ -5158,7 +5217,6 @@ function _setupOverlayClose(overlay, closeHandler, hintEl) {
   // ローカルプレイヤーのクリック
   const localClickHandler = () => {
     if (closed) return;
-    // 自分のクリックは1回だけカウント
     overlay.removeEventListener('click', localClickHandler);
     confirmedCount++;
     OnlineSync.sendAction('overlay_click', {});
