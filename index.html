@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.4</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.6</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2356,6 +2356,7 @@ const OnlineSync = (() => {
   let _waitResolve = null;   // consume()待ちのresolver（1つだけ）
   let _lastProcessedSeq = {}; // from別の最終処理済みseq（重複防止）
   let _overlayClickCallback = null; // overlay_click受信時のコールバック
+  let _overlayClickPending = 0;    // コールバック未設定時に受信したoverlay_clickの数
 
   /** 操作同期を開始（ゲーム開始時に呼ぶ） */
   function start(roomCode) {
@@ -2399,6 +2400,9 @@ const OnlineSync = (() => {
       if (action.type === 'overlay_click') {
         if (_overlayClickCallback) {
           _overlayClickCallback(action);
+        } else {
+          // コールバック未設定 → ペンディングカウントに加算（後でコールバック登録時に処理）
+          _overlayClickPending++;
         }
         return;
       }
@@ -2427,7 +2431,11 @@ const OnlineSync = (() => {
         _lastProcessedSeq[fromId] = action.seq;
         console.log('[OnlineSync] Received action (from queue):', action.type, action.data, 'seq:', action.seq);
         if (action.type === 'overlay_click') {
-          if (_overlayClickCallback) _overlayClickCallback(action);
+          if (_overlayClickCallback) {
+            _overlayClickCallback(action);
+          } else {
+            _overlayClickPending++;
+          }
           continue;
         }
         if (_waitResolve) {
@@ -2455,6 +2463,7 @@ const OnlineSync = (() => {
     }
     _lastProcessedSeq = {};
     _overlayClickCallback = null;
+    _overlayClickPending = 0;
   }
 
   /** ローカル操作をFirebaseに送信 */
@@ -2494,9 +2503,20 @@ const OnlineSync = (() => {
     console.log('[OnlineSync] Buffer cleared');
   }
 
-  /** overlay_click受信時のコールバックを設定 */
+  /** overlay_click受信時のコールバックを設定。ペンディング分があれば即座に処理。 */
   function setOverlayClickCallback(cb) {
     _overlayClickCallback = cb;
+    // コールバック設定前に受信していたoverlay_clickがあれば、即座に処理
+    if (cb && _overlayClickPending > 0) {
+      const pending = _overlayClickPending;
+      _overlayClickPending = 0;
+      for (let i = 0; i < pending; i++) {
+        cb({ type: 'overlay_click', data: {} });
+      }
+    }
+    if (!cb) {
+      _overlayClickPending = 0; // コールバック解除時はペンディングもクリア
+    }
   }
 
   return {
@@ -5141,16 +5161,6 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
       overlay.addEventListener('click', _localClick);
       _updateHint();
     }, 200);
-
-    // 安全策: 15秒タイムアウト
-    setTimeout(() => {
-      if (!closed) {
-        closed = true;
-        overlay.removeEventListener('click', _localClick);
-        OnlineSync.setOverlayClickCallback(null);
-        closeHandler();
-      }
-    }, 15000);
   } else {
     // 1人用: 200ms後に表示、クリックで即閉じ
     setTimeout(() => {
@@ -5226,17 +5236,6 @@ function _setupOverlayClose(overlay, closeHandler, hintEl) {
 
   overlay.addEventListener('click', localClickHandler);
   _updateHint();
-
-  // 安全策: 15秒後にまだ閉じていなければ強制クローズ（回線切断対策）
-  setTimeout(() => {
-    if (!closed) {
-      console.warn('[OverlaySync] Force closing overlay after timeout');
-      closed = true;
-      overlay.removeEventListener('click', localClickHandler);
-      OnlineSync.setOverlayClickCallback(null);
-      closeHandler();
-    }
-  }, 15000);
 }
 
 // Determine which skill types a card belongs to
