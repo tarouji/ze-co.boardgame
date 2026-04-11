@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.6</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.8</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2356,7 +2356,8 @@ const OnlineSync = (() => {
   let _waitResolve = null;   // consume()待ちのresolver（1つだけ）
   let _lastProcessedSeq = {}; // from別の最終処理済みseq（重複防止）
   let _overlayClickCallback = null; // overlay_click受信時のコールバック
-  let _overlayClickPending = 0;    // コールバック未設定時に受信したoverlay_clickの数
+  let _currentOverlayId = 0;        // 現在のオーバーレイID（連番）
+  let _overlayClickPending = 0;     // コールバック未設定時に受信した現在IDのoverlay_clickの数
 
   /** 操作同期を開始（ゲーム開始時に呼ぶ） */
   function start(roomCode) {
@@ -2398,12 +2399,14 @@ const OnlineSync = (() => {
 
       // overlay_clickは専用コールバックに振り分け（通常バッファに入れない）
       if (action.type === 'overlay_click') {
-        if (_overlayClickCallback) {
+        const clickId = action.data ? action.data.overlayId : undefined;
+        if (_overlayClickCallback && clickId === _currentOverlayId) {
           _overlayClickCallback(action);
-        } else {
-          // コールバック未設定 → ペンディングカウントに加算（後でコールバック登録時に処理）
+        } else if (clickId === _currentOverlayId) {
+          // コールバック未設定だが現在のID → ペンディングに加算
           _overlayClickPending++;
         }
+        // 異なるIDのoverlay_clickは無視（前のオーバーレイの残り）
         return;
       }
 
@@ -2431,9 +2434,10 @@ const OnlineSync = (() => {
         _lastProcessedSeq[fromId] = action.seq;
         console.log('[OnlineSync] Received action (from queue):', action.type, action.data, 'seq:', action.seq);
         if (action.type === 'overlay_click') {
-          if (_overlayClickCallback) {
+          const clickId = action.data ? action.data.overlayId : undefined;
+          if (_overlayClickCallback && clickId === _currentOverlayId) {
             _overlayClickCallback(action);
-          } else {
+          } else if (clickId === _currentOverlayId) {
             _overlayClickPending++;
           }
           continue;
@@ -2464,6 +2468,7 @@ const OnlineSync = (() => {
     _lastProcessedSeq = {};
     _overlayClickCallback = null;
     _overlayClickPending = 0;
+    _currentOverlayId = 0;
   }
 
   /** ローカル操作をFirebaseに送信 */
@@ -2505,18 +2510,28 @@ const OnlineSync = (() => {
 
   /** overlay_click受信時のコールバックを設定。ペンディング分があれば即座に処理。 */
   function setOverlayClickCallback(cb) {
+    if (cb) {
+      // 新しいオーバーレイ用のコールバック登録 → IDをインクリメント
+      _currentOverlayId++;
+      _overlayClickPending = 0; // 新しいIDなのでペンディングはリセット
+    }
     _overlayClickCallback = cb;
-    // コールバック設定前に受信していたoverlay_clickがあれば、即座に処理
+    // コールバック設定時にペンディング分があれば即座に処理
     if (cb && _overlayClickPending > 0) {
       const pending = _overlayClickPending;
       _overlayClickPending = 0;
       for (let i = 0; i < pending; i++) {
-        cb({ type: 'overlay_click', data: {} });
+        cb({ type: 'overlay_click', data: { overlayId: _currentOverlayId } });
       }
     }
     if (!cb) {
-      _overlayClickPending = 0; // コールバック解除時はペンディングもクリア
+      _overlayClickPending = 0;
     }
+  }
+
+  /** 現在のオーバーレイIDを取得（sendAction時に付与するため） */
+  function getOverlayId() {
+    return _currentOverlayId;
   }
 
   return {
@@ -2526,6 +2541,7 @@ const OnlineSync = (() => {
     consume,
     clearBuffer,
     setOverlayClickCallback,
+    getOverlayId,
     get active() { return _active; },
     get bufferSize() { return _actionBuffer.length; },
   };
@@ -5079,7 +5095,16 @@ function resetAttackCtx() {
 // SKILL CARD OVERLAY
 // ============================================================
 // Show card overlay with skill dice result, then call callback on click
+/** カードズームが開いていたら閉じる（オーバーレイ表示前に呼ぶ） */
+function _dismissCardZoom() {
+  const czOverlay = document.getElementById('card-zoom-overlay');
+  if (czOverlay && czOverlay.classList.contains('active')) {
+    czOverlay.classList.remove('active', 'zoom-large');
+  }
+}
+
 function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, skillUser) {
+  _dismissCardZoom();
   // 音順：まずサイコロ音 → 0.2秒後に演出表示 → 0.35秒後にスキル音（失敗時はスキル音なし）
   _audio.dice();
   const isFail = effectClass === 'skill-effect-fail';
@@ -5151,7 +5176,7 @@ function showSkillOverlay(cardId, diceValue, effectText, effectClass, callback, 
       if (closed) return;
       overlay.removeEventListener('click', _localClick);
       confirmedCount++;
-      OnlineSync.sendAction('overlay_click', {});
+      OnlineSync.sendAction('overlay_click', { overlayId: OnlineSync.getOverlayId() });
       _updateHint();
       _tryClose();
     };
@@ -5229,7 +5254,7 @@ function _setupOverlayClose(overlay, closeHandler, hintEl) {
     if (closed) return;
     overlay.removeEventListener('click', localClickHandler);
     confirmedCount++;
-    OnlineSync.sendAction('overlay_click', {});
+    OnlineSync.sendAction('overlay_click', { overlayId: OnlineSync.getOverlayId() });
     _updateHint();
     _tryClose();
   };
@@ -5737,6 +5762,8 @@ function setButtons(btns, actingPlayer, skipRemoteWait) {
       e.textContent = b.text;
       e.disabled = !!b.disabled;
       e.onclick = () => {
+        // ダブルタップ防止: クリック後にボタンを即無効化
+        e.disabled = true;
         if (OnlineSync.active) {
           // ローカル操作をFirebaseに送信
           OnlineSync.sendAction('button', { index: idx });
@@ -6390,6 +6417,7 @@ function initMissions() {
 
 // Show mission achievement overlay (like skill overlay)
 function showMissionAchievement(missionId, team, callback) {
+  _dismissCardZoom();
   _audio.fanfare();
   const m = MISSION_DB[missionId];
   const teamName = team === 'a' ? 'A軍' : 'B軍';
@@ -6879,6 +6907,7 @@ function checkAllHandLimits(callback) {
 }
 
 function showEventOverlay(eventId, callback, player) {
+  _dismissCardZoom();
   _audio.event();
   const ev = EVENT_DB[eventId];
   const overlay = document.getElementById('skill-overlay');
@@ -8546,6 +8575,7 @@ function cpuComboDiscard(ally, comboDmg, callback) {
 
 // Show combo attack overlay using the ally's unit card image
 function showComboOverlay(ally, comboDmg, callback) {
+  _dismissCardZoom();
   _audio.combo();
   const overlay = document.getElementById('skill-overlay');
   const img = document.getElementById('skill-overlay-img');
@@ -11240,6 +11270,9 @@ function _cpuTurnMain(player, d) {
 // ============================================================
 // INPUT
 // ============================================================
+// hexクリックの連続送信防止（タッチデバイスのダブルタップ対策）
+let _lastHexSendTime = 0;
+
 canvas.addEventListener('click', e => {
   if (gs.phase === 'gameover') return;
   const r = canvas.getBoundingClientRect();
@@ -11250,6 +11283,11 @@ canvas.addEventListener('click', e => {
 
   // オンライン対戦でリモート人間のターンならクリックを無視
   if (OnlineSync.active && _isRemoteHumanActing()) return;
+
+  // hexクリックのデバウンス（300ms以内の連続クリックを無視）
+  const now = Date.now();
+  if (OnlineSync.active && now - _lastHexSendTime < 300) return;
+  _lastHexSendTime = now;
 
   // ローカル操作をFirebaseに送信
   if (OnlineSync.active) {
