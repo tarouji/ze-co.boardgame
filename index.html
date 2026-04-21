@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.9</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -5720,6 +5720,7 @@ function updateTurnInfo() {
     evac_swap:'乗り換えるユニットを選択してください',
     respawn:'再出撃するマスを選択してください',
     respawn_unit_select:'出撃するユニットを選択してください',
+    end_turn_fskill:'使用するスキルを選択してください',
     gameover:'ゲーム終了',
   };
   let _phaseLabel = _phaseText[gs.phase] || '';
@@ -5727,10 +5728,12 @@ function updateTurnInfo() {
   if (gs.currentEventText) {
     _phaseLabel = gs.currentEventText;
   }
-  // 現在プレイヤーが人間でないとき（CPUターン）
+  // 現在プレイヤーが人間でないとき（CPUターン）、または他プレイヤーのターンのとき
+  // ただし自分がスキル使用機会中（_currentActingPlayerが自分）の場合は表示しない
   if (gs.phase !== 'gameover' && gs.phase !== 'setup' && gs.phase !== 'title') {
     const _cp = getCurrentPlayer();
-    if (_cp && !_cp.isLocal) {
+    const _acting = _currentActingPlayer;
+    if (_cp && !_cp.isLocal && !(_acting && _acting.isLocal)) {
       _phaseLabel = '他のプレイヤーのターンです';
     }
   }
