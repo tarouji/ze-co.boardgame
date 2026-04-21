@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.8</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.9.9</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -11289,19 +11289,23 @@ canvas.addEventListener('click', e => {
   if (OnlineSync.active && now - _lastHexSendTime < 300) return;
   _lastHexSendTime = now;
 
-  // ローカル操作をFirebaseに送信
-  if (OnlineSync.active) {
-    OnlineSync.sendAction('hex', { col: hex.col, row: hex.row });
-  }
-
+  // sendActionは_processHexClick内で有効な操作時のみ呼ばれる
   _processHexClick(hex);
 });
 
 /** ヘックスクリックの処理（ローカル・リモート共通） */
 function _processHexClick(hex) {
+  // ローカル操作時にFirebaseに送信するヘルパー（有効なアクション時のみ呼ぶ）
+  function _sendHex() {
+    if (OnlineSync.active && !_isRemoteHumanActing()) {
+      OnlineSync.sendAction('hex', { col: hex.col, row: hex.row });
+    }
+  }
+
   if (gs.phase === 'event_move' && gs.spawnChoices.length > 0 && gs._eventMoveCallback) {
     const valid = gs.spawnChoices.find(h => h.col === hex.col && h.row === hex.row);
     if (valid) {
+      _sendHex();
       gs._eventMoveCallback(valid.col, valid.row);
     }
     return;
@@ -11311,6 +11315,7 @@ function _processHexClick(hex) {
   if (gs.phase === 'evac_select' && gs.spawnChoices.length > 0 && gs._evacCallback) {
     const valid = gs.spawnChoices.find(h => h.col === hex.col && h.row === hex.row);
     if (valid) {
+      _sendHex();
       gs._evacCallback(valid.col, valid.row);
     }
     return;
@@ -11320,6 +11325,7 @@ function _processHexClick(hex) {
   if ((gs.phase === 'setup' || gs.phase === 'respawn') && gs.spawnChoices.length > 0 && gs.respawningPlayer) {
     const valid = gs.spawnChoices.find(h => h.col === hex.col && h.row === hex.row);
     if (valid) {
+      _sendHex();
       const player = gs.respawningPlayer;
 
       if (gs.phase === 'setup') {
@@ -11350,11 +11356,15 @@ function _processHexClick(hex) {
   // ローカル人間 or リモート人間（consume経由）の操作を許可
   const canAct = cp && (cp.isLocal || _isRemoteHuman(cp));
   if (gs.phase === 'move') {
-    if (canAct && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) executeMove(hex.col, hex.row);
+    if (canAct && gs.moveRange.find(h => h.col === hex.col && h.row === hex.row)) {
+      _sendHex();
+      executeMove(hex.col, hex.row);
+    }
   } else if (gs.phase === 'shoot') {
     if (canAct) {
       const t = gs.shootTargets.find(t => t.col === hex.col && t.row === hex.row);
       if (t) {
+        _sendHex();
         gs.shootRangeHexes = [];
         gs.shootTargets = [];
         showPreDamagePhase(cp, t.player, 'shoot');
@@ -11363,10 +11373,14 @@ function _processHexClick(hex) {
   } else if (gs.phase === 'melee') {
     if (canAct && gs.meleeTargets) {
       const t = gs.meleeTargets.find(e => e.unit.col === hex.col && e.unit.row === hex.row);
-      if (t) executeMeleeFromMap(t);
+      if (t) {
+        _sendHex();
+        executeMeleeFromMap(t);
+      }
     }
   } else if (gs.phase !== 'evac_swap') {
     // No game action → check if unit clicked for card zoom（ターン問わず）
+    // ★ カード拡大はゲームアクションではないので sendHex しない
     const clickedUnit = getUnitAt(hex.col, hex.row);
     if (clickedUnit && clickedUnit.unit) {
       const cardEntry = Object.values(CARD_DB).find(c => c.type === 'unit' && c.unitId === clickedUnit.unit.templateId);
