@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.3</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.7</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2101,7 +2101,21 @@ const OnlineLobby = (() => {
 
     // BGM
     ssBGMEnabled = !!data.bgm;
-    if (ssBGMEnabled) _bgm.play(2); else _bgm.stop();
+    if (ssBGMEnabled) {
+      // まずBGM再生を試みる（ホスト側はボタンクリック起点なので再生される）
+      _bgm.play(2);
+      // ゲスト側はFirebaseイベント起点のためAudioContextがsuspendedの場合がある
+      // 最初のユーザーインタラクションでresumeして再生を開始する
+      const _resumeAudio = () => {
+        _bgm.resume();
+        document.removeEventListener('click', _resumeAudio);
+        document.removeEventListener('touchstart', _resumeAudio);
+      };
+      document.addEventListener('click', _resumeAudio);
+      document.addEventListener('touchstart', _resumeAudio);
+    } else {
+      _bgm.stop();
+    }
 
     // シードを設定してゲーム開始
     gs._onlineSeed = data.seed;
@@ -3473,7 +3487,7 @@ const _bgm = (() => {
       setTimeout(()=>old.forEach(n=>{try{n.stop(0)}catch(e){}}), 200);
     }, fireAt > 0 ? fireAt : 0);
   }
-  return {play,stop};
+  return {play,stop,resume(){if(bac&&bac.state==='suspended')bac.resume();if(cur){killLoop();_loop();}}};
 })();
 
 // ゼーコアクス消滅チェック：撃墜・乗り換え後にevent35を終了済みにする
@@ -5772,6 +5786,8 @@ let _currentActingPlayer = null;
 function setButtons(btns, actingPlayer, skipRemoteWait) {
   // actingPlayerが指定されていればグローバルに記録
   if (actingPlayer !== undefined) _currentActingPlayer = actingPlayer;
+  // btns配列を保持（_startRemoteHexWaitでボタン操作の再現に使用）
+  _lastSetButtonsBtns = btns;
 
   const c = document.getElementById('action-buttons');
   c.innerHTML = '';
@@ -5872,8 +5888,11 @@ function _isRemoteHuman(player) {
  * consume方式でバッファ済みのアクションも正しく処理する。
  * ヘックス待ち中にボタン（戻る等）が来た場合も処理する。
  */
+let _lastSetButtonsBtns = []; // setButtonsで最後に設定されたbtns配列を保持
+
 function _startRemoteHexWait() {
   if (!OnlineSync.active || !_isRemoteHumanActing()) return;
+  const btns = _lastSetButtonsBtns; // hex待ち開始時のボタン配列を保持
   _setStatusMessage('他プレイヤーの操作を待っています...');
   OnlineSync.consume().then(action => {
     _clearStatusMessage();
@@ -5881,8 +5900,13 @@ function _startRemoteHexWait() {
       _processHexClick({ col: action.data.col, row: action.data.row });
     } else if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
       // ヘックス待ち中にボタン（戻る等）が押された場合
-      // DOMのボタンを直接クリックして処理
-      _replayRemoteButton(action.data.index);
+      // btns配列から直接actionを呼ぶ（DOMにボタンがないため）
+      const idx = action.data.index;
+      if (btns && idx >= 0 && idx < btns.length) {
+        btns[idx].action();
+      } else {
+        console.warn('[OnlineSync] Button index out of range in hex wait:', idx);
+      }
     } else {
       console.warn('[OnlineSync] Unexpected action during hex wait:', action.type);
     }
@@ -7437,7 +7461,10 @@ function eventMoveselfInternal(target, controller, callback, backFn) {
         if (action.type === 'hex') {
           _processHexClick({ col: action.data.col, row: action.data.row });
         } else if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
-          _replayRemoteButton(action.data.index);
+          const idx = action.data.index;
+          if (_lastSetButtonsBtns && idx >= 0 && idx < _lastSetButtonsBtns.length) {
+            _lastSetButtonsBtns[idx].action();
+          }
         }
       });
     }
@@ -8132,7 +8159,10 @@ function _waitForRemoteAndProcess() {
   OnlineSync.consume().then(action => {
     _clearStatusMessage();
     if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
-      _replayRemoteButton(action.data.index);
+      const idx = action.data.index;
+      if (_lastSetButtonsBtns && idx >= 0 && idx < _lastSetButtonsBtns.length) {
+        _lastSetButtonsBtns[idx].action();
+      }
     } else if (action.type === 'hex') {
       _processHexClick({ col: action.data.col, row: action.data.row });
     }
@@ -9265,6 +9295,19 @@ function applyDamageUp(player, cardId, rawDice, cappedDice, returnCallback) {
 // --- Skill Dice Control (for when サイコロ操作 is active) ---
 // Shows 1-6 choices inside the skill overlay. Values > statCap shown in red.
 function showSkillDiceControlChoice(player, statCap, cardId, callback) {
+  // オンライン対戦でリモート人間の場合: UIを表示せず、consumeで出目を受信する
+  if (gameConfig._isOnline && !player.isLocal && !player.ai) {
+    _setStatusMessage('他プレイヤーの操作を待っています...');
+    OnlineSync.consume().then(action => {
+      _clearStatusMessage();
+      if (action.type === 'button' && action.data && typeof action.data.index === 'number') {
+        // 出目は index+1 (0→1, 1→2, ... 5→6)
+        callback(action.data.index + 1);
+      }
+    });
+    return;
+  }
+
   const overlay = document.getElementById('skill-overlay');
   const img = document.getElementById('skill-overlay-img');
   const diceEl = document.getElementById('skill-dice-value');
@@ -9303,6 +9346,10 @@ function showSkillDiceControlChoice(player, statCap, cardId, callback) {
     const val = i;
     btn.onclick = (e) => {
       e.stopPropagation();
+      // オンライン: 選択した出目をFirebaseに送信（indexは val-1）
+      if (OnlineSync.active) {
+        OnlineSync.sendAction('button', { index: val - 1 });
+      }
       cleanup();
       callback(val);
     };
