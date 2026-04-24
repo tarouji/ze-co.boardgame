@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.0</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.3</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2399,14 +2399,17 @@ const OnlineSync = (() => {
 
       // overlay_clickは専用コールバックに振り分け（通常バッファに入れない）
       if (action.type === 'overlay_click') {
-        const clickId = action.data ? action.data.overlayId : undefined;
-        if (_overlayClickCallback && clickId === _currentOverlayId) {
-          _overlayClickCallback(action);
-        } else if (clickId === _currentOverlayId) {
-          // コールバック未設定だが現在のID → ペンディングに加算
+        if (_overlayClickCallback) {
+          // コールバックあり: 現在のIDと一致する場合のみ処理
+          const clickId = action.data ? action.data.overlayId : undefined;
+          if (clickId === _currentOverlayId) {
+            _overlayClickCallback(action);
+          }
+          // 異なるIDは無視（前のオーバーレイの残り）
+        } else {
+          // コールバック未設定 → ペンディングに加算（ID問わず）
           _overlayClickPending++;
         }
-        // 異なるIDのoverlay_clickは無視（前のオーバーレイの残り）
         return;
       }
 
@@ -2434,10 +2437,12 @@ const OnlineSync = (() => {
         _lastProcessedSeq[fromId] = action.seq;
         console.log('[OnlineSync] Received action (from queue):', action.type, action.data, 'seq:', action.seq);
         if (action.type === 'overlay_click') {
-          const clickId = action.data ? action.data.overlayId : undefined;
-          if (_overlayClickCallback && clickId === _currentOverlayId) {
-            _overlayClickCallback(action);
-          } else if (clickId === _currentOverlayId) {
+          if (_overlayClickCallback) {
+            const clickId = action.data ? action.data.overlayId : undefined;
+            if (clickId === _currentOverlayId) {
+              _overlayClickCallback(action);
+            }
+          } else {
             _overlayClickPending++;
           }
           continue;
@@ -2513,17 +2518,20 @@ const OnlineSync = (() => {
     if (cb) {
       // 新しいオーバーレイ用のコールバック登録 → IDをインクリメント
       _currentOverlayId++;
-      _overlayClickPending = 0; // 新しいIDなのでペンディングはリセット
-    }
-    _overlayClickCallback = cb;
-    // コールバック設定時にペンディング分があれば即座に処理
-    if (cb && _overlayClickPending > 0) {
-      const pending = _overlayClickPending;
-      _overlayClickPending = 0;
-      for (let i = 0; i < pending; i++) {
-        cb({ type: 'overlay_click', data: { overlayId: _currentOverlayId } });
+      // ペンディング分（コールバック未設定中に届いたoverlay_click）をフラッシュ
+      if (_overlayClickPending > 0) {
+        const pending = _overlayClickPending;
+        _overlayClickPending = 0;
+        _overlayClickCallback = cb;
+        for (let i = 0; i < pending; i++) {
+          if (_overlayClickCallback) { // close内でnullにされる可能性を考慮
+            cb({ type: 'overlay_click', data: { overlayId: _currentOverlayId } });
+          }
+        }
+        return; // _overlayClickCallback は既にセット済み
       }
     }
+    _overlayClickCallback = cb;
     if (!cb) {
       _overlayClickPending = 0;
     }
@@ -4291,12 +4299,20 @@ function msUpdateAll() {
 function msSetButtons(btns) {
   const c = document.getElementById('ms-buttons-area');
   c.innerHTML = '';
-  for (const b of btns) {
+  for (let i = 0; i < btns.length; i++) {
+    const b = btns[i];
+    const idx = i;
     const e = document.createElement('button');
     e.className = `btn ${b.cls||'btn-primary'}`;
     e.textContent = b.text;
     e.disabled = !!b.disabled;
-    e.onclick = b.action;
+    e.onclick = () => {
+      e.disabled = true; // ダブルタップ防止
+      if (OnlineSync.active) {
+        OnlineSync.sendAction('button', { index: idx });
+      }
+      b.action();
+    };
     c.appendChild(e);
   }
 }
@@ -4483,10 +4499,19 @@ function _showCardListZoom(src, onClose) {
 
 function setGameOverButtons() {
   if (ssBGMEnabled) _bgm.play(1); else _bgm.stop();
-  setButtons([
-    { text:'もう一度対戦する', cls:'btn-purple', action:() => { _audio.rematch(); setTimeout(() => { if (ssBGMEnabled) _bgm.play(2); else _bgm.stop(); startGame(true); }, 100); } },
-    { text:'タイトル画面に戻る', cls:'btn-purple', action:() => { _audio.titleBack(); setTimeout(() => returnToTitle(), 500); } }
-  ]);
+  if (gameConfig._isOnline) {
+    // オンライン対戦: タイトルに戻るのみ（リマッチ未対応）
+    OnlineSync.stop();
+    setButtons([
+      { text:'タイトル画面に戻る', cls:'btn-purple', action:() => { _audio.titleBack(); setTimeout(() => returnToTitle(), 500); } }
+    ]);
+  } else {
+    // 1人用: リマッチ + タイトルに戻る
+    setButtons([
+      { text:'もう一度対戦する', cls:'btn-purple', action:() => { _audio.rematch(); setTimeout(() => { if (ssBGMEnabled) _bgm.play(2); else _bgm.stop(); startGame(true); }, 100); } },
+      { text:'タイトル画面に戻る', cls:'btn-purple', action:() => { _audio.titleBack(); setTimeout(() => returnToTitle(), 500); } }
+    ]);
+  }
 }
 
 // ============================================================
