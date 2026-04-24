@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.7</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.8</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -8167,16 +8167,6 @@ function _waitForRemoteAndProcess() {
       _processHexClick({ col: action.data.col, row: action.data.row });
     }
   });
-}
-
-/** リモートのボタン操作を再現 */
-function _replayRemoteButton(index) {
-  // action-buttonsの子要素からボタンを取得してクリック
-  const c = document.getElementById('action-buttons');
-  const buttons = c ? c.querySelectorAll('button') : [];
-  if (index >= 0 && index < buttons.length) {
-    buttons[index].click();
-  }
 }
 
 // === PHASE (1): Before rolling action dice ===
