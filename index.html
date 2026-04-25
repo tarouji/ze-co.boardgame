@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.8</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.9</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2102,17 +2102,15 @@ const OnlineLobby = (() => {
     // BGM
     ssBGMEnabled = !!data.bgm;
     if (ssBGMEnabled) {
-      // まずBGM再生を試みる（ホスト側はボタンクリック起点なので再生される）
-      _bgm.play(2);
-      // ゲスト側はFirebaseイベント起点のためAudioContextがsuspendedの場合がある
-      // 最初のユーザーインタラクションでresumeして再生を開始する
-      const _resumeAudio = () => {
-        _bgm.resume();
-        document.removeEventListener('click', _resumeAudio);
-        document.removeEventListener('touchstart', _resumeAudio);
+      // AudioContextの作成・再生はユーザーインタラクション内でないとブラウザにブロックされる。
+      // _onGameStartはFirebaseイベント経由のため、最初のクリック/タップでBGMを開始する。
+      const _startBGM = () => {
+        _bgm.play(2);
+        document.removeEventListener('click', _startBGM, true);
+        document.removeEventListener('touchend', _startBGM, true);
       };
-      document.addEventListener('click', _resumeAudio);
-      document.addEventListener('touchstart', _resumeAudio);
+      document.addEventListener('click', _startBGM, true);
+      document.addEventListener('touchend', _startBGM, true);
     } else {
       _bgm.stop();
     }
