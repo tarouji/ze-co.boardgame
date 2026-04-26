@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.10.9</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.11.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -2099,21 +2099,9 @@ const OnlineLobby = (() => {
     gameConfig._onlinePlayerId = _playerId;
     gameConfig._isOnline = true;
 
-    // BGM
+    // BGM（AudioContextはロビーのボタンクリック時に事前作成済み）
     ssBGMEnabled = !!data.bgm;
-    if (ssBGMEnabled) {
-      // AudioContextの作成・再生はユーザーインタラクション内でないとブラウザにブロックされる。
-      // _onGameStartはFirebaseイベント経由のため、最初のクリック/タップでBGMを開始する。
-      const _startBGM = () => {
-        _bgm.play(2);
-        document.removeEventListener('click', _startBGM, true);
-        document.removeEventListener('touchend', _startBGM, true);
-      };
-      document.addEventListener('click', _startBGM, true);
-      document.addEventListener('touchend', _startBGM, true);
-    } else {
-      _bgm.stop();
-    }
+    if (ssBGMEnabled) _bgm.play(2); else _bgm.stop();
 
     // シードを設定してゲーム開始
     gs._onlineSeed = data.seed;
@@ -2665,8 +2653,17 @@ function lobbyBackToChoice() {
   document.getElementById('lobby-step-room').style.display = 'none';
   document.getElementById('lobby-join-status').textContent = '';
 }
-function lobbyCreateRoom() { if (!lobbyValidate()) return; OnlineLobby.createRoom(); }
+/** オンラインロビーでのボタンクリック時にAudioContextを事前作成（BGM再生の準備） */
+function _warmUpAudio() {
+  // _bgm内部のAudioContextをユーザーインタラクション内で作成・resumeする
+  // play(1)→即stop で一瞬だけ再生してcontextを初期化
+  _bgm.play(1);
+  _bgm.stop();
+}
+
+function lobbyCreateRoom() { _warmUpAudio(); if (!lobbyValidate()) return; OnlineLobby.createRoom(); }
 function lobbyShowJoin() {
+  _warmUpAudio();
   if (!lobbyValidate()) return;
   document.getElementById('lobby-step-choice').style.display = 'none';
   document.getElementById('lobby-step-join').style.display = '';
@@ -2674,6 +2671,7 @@ function lobbyShowJoin() {
   document.getElementById('lobby-join-status').textContent = '';
 }
 function lobbyJoinRoom() {
+  _warmUpAudio();
   const code = document.getElementById('lobby-join-code').value;
   OnlineLobby.joinRoom(code);
 }
@@ -2706,6 +2704,7 @@ function lobbySetTeam(pid, team) {
   OnlineLobby.setPlayerTeam(pid, team);
 }
 function lobbyStartGame() {
+  _warmUpAudio();
   const count = OnlineLobby.getPlayerCount();
   const match = OnlineLobby.getMatch();
   if (count >= 3 && match === 1) { alert('その対戦形式は選べません'); return; }
