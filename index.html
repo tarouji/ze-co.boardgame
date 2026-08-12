@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.11.1</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.11.2</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1931,6 +1931,7 @@ const OnlineLobby = (() => {
   let _lobbyMatch = 2;
   let _lobbyBGM = true;
   let _playerCount = 0;
+  let _gameStarted = false; // ゲーム開始処理の二重実行防止（_cleanupでリセット）
 
   /** 4文字の参加コードを生成 */
   function _generateCode() {
@@ -2039,6 +2040,7 @@ const OnlineLobby = (() => {
     _roomRef = null;
     _roomCode = null;
     _isHost = false;
+    _gameStarted = false; // 次のオンライン対戦を開始できるようリセット
   }
 
   /** 部屋のデータ監視を開始 */
@@ -2061,7 +2063,6 @@ const OnlineLobby = (() => {
   }
 
   /** ゲーム開始処理（二重呼び出し防止つき） */
-  let _gameStarted = false;
   function _onGameStart(data) {
     if (_gameStarted) {
       console.log('[Lobby] _onGameStart already called, ignoring duplicate');
@@ -4109,7 +4110,7 @@ function msRenderUnits(el) {
     info.innerHTML = `
       <div class="ms-unit-name">${name}</div>
       ${hasUnit ? `<div class="ms-unit-stars-hp">${stars} 耐${hp}/${maxHp}</div>` : ''}
-      <div class="ms-unit-pilot">${p.name}</div>
+      <div class="ms-unit-pilot">${escHtml(p.name)}</div>
       <div class="ms-unit-stats">技${p.stats.tech} 反${p.stats.react} 精${p.stats.spirit}${p.noCards ? '' : ` 手札${handCount}`}</div>
     `;
     div.appendChild(info);
@@ -4336,6 +4337,12 @@ function msAddLog(text, type) {
 }
 
 function returnToTitle() {
+  // オンライン対戦から戻る場合は部屋を離脱し、同期状態をリセット
+  if (gameConfig._isOnline) {
+    try { OnlineSync.stop(); } catch(e) {}
+    try { OnlineLobby.leaveRoom(); } catch(e) {}
+    gameConfig._isOnline = false;
+  }
   if (isMobile()) {
     msReturnToTitle();
   } else {
@@ -5717,7 +5724,7 @@ function updateUnitPanels() {
       <div class="unit-name-row">${unitName}</div>
       <div class="unit-stars-hp-row"><span class="unit-stars">${stars}</span><span>${hpText}</span></div>
       <div class="unit-hp-bar"><div class="unit-hp-fill ${hpClass}" style="width:${pct}%"></div></div>
-      <div class="pilot-name-row">${p.name}</div>
+      <div class="pilot-name-row">${escHtml(p.name)}</div>
       <div class="pilot-stats-row">技術${p.stats.tech} 反応${p.stats.react} 精神${p.stats.spirit}</div>
       <div class="hand-count-row">${p.noCards ? '' : '手札: ' + p.hand.length + '枚'}</div>
     `;
@@ -5925,13 +5932,23 @@ function _clearStatusMessage() {
   }
 }
 
+/** HTMLエスケープ（プレイヤー名など外部入力をinnerHTMLに埋める前に必ず通す） */
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function addLog(text, type='') {
   gs.log.push({ text, type });
   if (gs.log.length > 150) gs.log.shift();
   const logArea = document.getElementById('log-area');
   logArea.innerHTML =
     '<div class="log-title">ゲームログ</div>' +
-    gs.log.map(l => `<div class="log-entry ${l.type}">${l.text}</div>`).join('');
+    gs.log.map(l => `<div class="log-entry ${escHtml(l.type)}">${escHtml(l.text)}</div>`).join('');
   logArea.scrollTop = logArea.scrollHeight;
   if (isMobile()) msAddLog(text, type);
 }
@@ -7344,6 +7361,8 @@ function eventMoveself(player, callback) {
   if (player.isLocal || _isRemoteHuman(player)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
+    // 操作対象プレイヤーを明示（ローカル/リモート問わず。残留値による誤判定を防ぐ）
+    _currentActingPlayer = player;
     updateAll();
     gs._eventMoveCallback = (col, row) => {
       player.unit.col = col; player.unit.row = row;
@@ -7357,7 +7376,6 @@ function eventMoveself(player, callback) {
     setButtons([]);
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(player) && OnlineSync.active) {
-      _currentActingPlayer = player;
       _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
@@ -7427,6 +7445,8 @@ function eventMoveselfInternal(target, controller, callback, backFn) {
   if (controller.isLocal || _isRemoteHuman(controller)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = valid;
+    // 操作対象プレイヤーを明示（ローカル/リモート問わず。残留値による誤判定を防ぐ）
+    _currentActingPlayer = controller;
     updateAll();
     gs._eventMoveCallback = (col, row) => {
       target.unit.col = col; target.unit.row = row;
@@ -7451,7 +7471,6 @@ function eventMoveselfInternal(target, controller, callback, backFn) {
     }
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(controller) && OnlineSync.active) {
-      _currentActingPlayer = controller;
       _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
@@ -7762,6 +7781,8 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
   if (p.isLocal || _isRemoteHuman(p)) {
     gs.phase = 'event_move'; gs.currentEventText = '【イベント】 移動するマスを選択してください';
     gs.spawnChoices = avail.map(([c,r]) => ({ col:c, row:r }));
+    // 操作対象プレイヤーを明示（ローカル/リモート問わず。残留値による誤判定を防ぐ）
+    _currentActingPlayer = p;
     updateAll();
     gs._eventMoveCallback = (col, row) => {
       p.unit.col = col; p.unit.row = row;
@@ -7775,7 +7796,6 @@ function eventRetreatNext(orderedPlayers, idx, spawns, callback) {
     setButtons([]);
     // リモート人間のヘックスクリック待ち
     if (_isRemoteHuman(p) && OnlineSync.active) {
-      _currentActingPlayer = p;
       _setStatusMessage('他プレイヤーの操作を待っています...');
       OnlineSync.consume().then(action => {
         _clearStatusMessage();
