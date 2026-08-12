@@ -1656,7 +1656,7 @@
 <div class="info-modal-overlay" id="rule-modal">
   <div class="info-modal-panel">
     <div class="info-modal-header">
-      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.11.2</span></div>
+      <div class="info-modal-title">ゲームルールの説明<span style="font-size:12px;font-weight:400;color:#556;margin-left:28px;letter-spacing:1px;">version 1.12.0</span></div>
       <button class="info-modal-close" onclick="closeInfoModal('rule-modal')">✕</button>
     </div>
     <div class="info-modal-body" id="rule-modal-body">
@@ -1932,6 +1932,8 @@ const OnlineLobby = (() => {
   let _lobbyBGM = true;
   let _playerCount = 0;
   let _gameStarted = false; // ゲーム開始処理の二重実行防止（_cleanupでリセット）
+  let _gamePlayerIds = null; // ゲーム開始時点の参加者ID一覧（離脱検知用）
+  let _aborted = false;      // 中断処理の多重実行防止
 
   /** 4文字の参加コードを生成 */
   function _generateCode() {
@@ -2041,13 +2043,20 @@ const OnlineLobby = (() => {
     _roomCode = null;
     _isHost = false;
     _gameStarted = false; // 次のオンライン対戦を開始できるようリセット
+    _gamePlayerIds = null;
+    _aborted = false;
   }
 
   /** 部屋のデータ監視を開始 */
   function _watchRoom() {
     const playersRef = _roomRef.child('players');
     const onPlayers = playersRef.on('value', snap => {
-      _renderPlayers(snap.val());
+      const players = snap.val();
+      _renderPlayers(players);
+      // ゲーム中に参加者が減っていたら対戦を中断する
+      if (_gameStarted && !_aborted && _gamePlayerIds) {
+        _checkPlayersLeft(players);
+      }
     });
     _listeners.push(() => playersRef.off('value', onPlayers));
 
@@ -2062,6 +2071,29 @@ const OnlineLobby = (() => {
     _listeners.push(() => startRef.off('value', onStart));
   }
 
+  /** ゲーム中の離脱を検知して対戦を中断する */
+  function _checkPlayersLeft(players) {
+    // ゲームがすでに終了している場合は何もしない
+    if (typeof gs !== 'undefined' && gs.phase === 'gameover') return;
+
+    const current = players ? Object.keys(players) : [];
+    const missing = _gamePlayerIds.filter(pid => !current.includes(pid));
+    if (missing.length === 0) return;
+
+    // 離脱者の名前を特定（gs.playersのonlineIdから引く）
+    let leftName = '';
+    if (typeof gs !== 'undefined' && gs.players) {
+      const p = gs.players.find(pl => pl.onlineId === missing[0]);
+      if (p) leftName = p.name;
+    }
+
+    _aborted = true;
+    console.log('[Lobby] Player left during game:', missing, leftName);
+    if (typeof onlineAbortGame === 'function') {
+      onlineAbortGame(leftName);
+    }
+  }
+
   /** ゲーム開始処理（二重呼び出し防止つき） */
   function _onGameStart(data) {
     if (_gameStarted) {
@@ -2070,6 +2102,16 @@ const OnlineLobby = (() => {
     }
     _gameStarted = true;
     console.log('[Lobby] Game starting with seed:', data.seed);
+
+    // H-3対策: ゲーム中にホストが切断しても部屋ごと消えないようにする。
+    // （部屋が消えるとactionsフィードも消滅し、残りのプレイヤーが復帰不能になる）
+    if (_roomRef) {
+      try { _roomRef.onDisconnect().cancel(); } catch (e) {}
+    }
+
+    // 離脱検知用に、開始時点の参加者IDを記録
+    _gamePlayerIds = Object.keys(data.players || {});
+    _aborted = false;
 
     // ロビーを閉じる
     document.getElementById('lobby-screen').classList.remove('active');
@@ -2417,6 +2459,7 @@ const OnlineSync = (() => {
       if (_waitResolve) {
         const r = _waitResolve;
         _waitResolve = null;
+        _verifySync(action);
         r(action);
       } else {
         _actionBuffer.push(action);
@@ -2451,6 +2494,7 @@ const OnlineSync = (() => {
         if (_waitResolve) {
           const r = _waitResolve;
           _waitResolve = null;
+          _verifySync(action);
           r(action);
         } else {
           _actionBuffer.push(action);
@@ -2477,6 +2521,23 @@ const OnlineSync = (() => {
     _currentOverlayId = 0;
   }
 
+  /**
+   * 送信時のゲーム状態スナップショットを作る（同期チェック用）
+   * 受信側で自分の状態と照合し、食い違いを警告する。
+   */
+  function _stateSnapshot() {
+    try {
+      if (typeof gs === 'undefined' || !gs.players) return null;
+      return {
+        phase: gs.phase || '',
+        turn: gs.turnCount || 0,
+        turnIdx: gs.currentTurnIdx || 0,
+        btnCount: (typeof _lastSetButtonsBtns !== 'undefined' && _lastSetButtonsBtns)
+          ? _lastSetButtonsBtns.length : -1,
+      };
+    } catch (e) { return null; }
+  }
+
   /** ローカル操作をFirebaseに送信 */
   async function sendAction(type, data) {
     if (!_active || !_actionRef) return;
@@ -2488,8 +2549,35 @@ const OnlineSync = (() => {
       data: data,
       timestamp: firebase.database.ServerValue.TIMESTAMP
     };
+    const snapshot = _stateSnapshot();
+    if (snapshot) actionData.st = snapshot;
     console.log('[OnlineSync] Sending action:', type, data, 'seq:', _actionCounter);
     await _actionRef.push(actionData);
+  }
+
+  /**
+   * 受信アクションの状態を自分の状態と照合し、食い違いを警告する。
+   * ※ 警告のみ。ゲームの動作は一切変更しない（段階1）。
+   */
+  function _verifySync(action) {
+    if (!action || !action.st) return;
+    const mine = _stateSnapshot();
+    if (!mine) return;
+    const s = action.st;
+    const diffs = [];
+    if (s.phase !== mine.phase) diffs.push(`phase: 受信=${s.phase} / 自分=${mine.phase}`);
+    if (s.turn !== mine.turn) diffs.push(`turn: 受信=${s.turn} / 自分=${mine.turn}`);
+    if (s.turnIdx !== mine.turnIdx) diffs.push(`turnIdx: 受信=${s.turnIdx} / 自分=${mine.turnIdx}`);
+    if (action.type === 'button' && s.btnCount >= 0 && mine.btnCount >= 0
+        && s.btnCount !== mine.btnCount) {
+      diffs.push(`btnCount: 受信=${s.btnCount} / 自分=${mine.btnCount}`);
+    }
+    if (diffs.length > 0) {
+      console.warn(
+        '[SyncCheck] 状態の不一致を検出\n  ' + diffs.join('\n  ') +
+        `\n  action: ${action.type} ${JSON.stringify(action.data)} (from=${action.from} seq=${action.seq})`
+      );
+    }
   }
 
   /**
@@ -2501,6 +2589,7 @@ const OnlineSync = (() => {
     if (_actionBuffer.length > 0) {
       const action = _actionBuffer.shift();
       console.log('[OnlineSync] Consuming buffered action:', action.type, action.data);
+      _verifySync(action);
       return Promise.resolve(action);
     }
     console.log('[OnlineSync] Waiting for remote action...');
@@ -4514,6 +4603,36 @@ function _showCardListZoom(src, onClose) {
 }
 
 
+
+/**
+ * オンライン対戦の強制中断（プレイヤー離脱時）
+ * 復帰は行わず、全員に通知してタイトル画面へ戻す。
+ */
+function onlineAbortGame(leftName) {
+  if (!gameConfig._isOnline) return;
+  if (gs.phase === 'gameover') return;
+
+  gs.phase = 'gameover';
+  OnlineSync.stop();
+
+  const who = leftName ? `${leftName} が` : 'プレイヤーが';
+  addLog(`${who}退出したため、対戦を中断しました。`, 'log-progress');
+  updateAll();
+
+  // オーバーレイが開いていれば閉じる
+  const skillOv = document.getElementById('skill-overlay');
+  if (skillOv) skillOv.classList.remove('active');
+  _dismissCardZoom();
+  _clearStatusMessage();
+
+  showGameAnnounce('対戦が中断されました', 'game-over', () => {
+    if (ssBGMEnabled) _bgm.play(1); else _bgm.stop();
+    setButtons([
+      { text:'タイトル画面に戻る', cls:'btn-purple',
+        action:() => { _audio.titleBack(); setTimeout(() => returnToTitle(), 500); } }
+    ]);
+  });
+}
 
 function setGameOverButtons() {
   if (ssBGMEnabled) _bgm.play(1); else _bgm.stop();
